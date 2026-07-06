@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>ec.ecopos</groupId>
+    <artifactId>ecopos-sri-connector</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>ECOPos SRI Connector</name>
+    <description>
+        Modulo independiente que integra ECOPos (POS Java/Swing) con los
+        servicios de facturacion electronica del SRI (Servicio de Rentas
+        Internas, Ecuador). Se distribuye como jar propio; ECOPos solo lo
+        referencia a traves de un hook minimo, sin depender de su build.
+    </description>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <jaxb.version>2.3.9</jaxb.version>
+        <xades4j.version>2.4.0</xades4j.version>
+        <cxf.version>3.6.4</cxf.version>
+        <mysql.version>8.0.33</mysql.version>
+        <slf4j.version>2.0.13</slf4j.version>
+        <logback.version>1.5.6</logback.version>
+        <junit.version>5.10.2</junit.version>
+    </properties>
+
+    <dependencies>
+        <!-- JAXB: las clases del comprobante XML se GENERAN a partir del/los
+             .xsd oficiales del SRI (ver src/main/resources/xsd) via el plugin
+             jaxb2-maven-plugin configurado abajo. No se escriben a mano. -->
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+            <version>2.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+            <version>${jaxb.version}</version>
+        </dependency>
+
+        <!-- Firma electronica XAdES-BES sobre el XML del comprobante -->
+        <dependency>
+            <groupId>com.googlecode.xades4j</groupId>
+            <artifactId>xades4j</artifactId>
+            <version>${xades4j.version}</version>
+        </dependency>
+
+        <!-- Cliente SOAP para RecepcionComprobantesOffline / AutorizacionComprobantesOffline.
+             Los stubs se generan del WSDL con cxf-codegen-plugin (ver plugins). -->
+        <dependency>
+            <groupId>org.apache.cxf</groupId>
+            <artifactId>cxf-rt-frontend-jaxws</artifactId>
+            <version>${cxf.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.cxf</groupId>
+            <artifactId>cxf-rt-transports-http</artifactId>
+            <version>${cxf.version}</version>
+        </dependency>
+
+        <!-- Acceso a MySQL: solo para leer TICKETS/RECEIPTS de ECOPos (lectura)
+             y para el CRUD propio de ecopos_sri_comprobantes -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>${mysql.version}</version>
+        </dependency>
+
+        <!-- Logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
+        </dependency>
+
+        <!-- Tests -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>ecopos-sri-connector</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+
+            <!-- Genera las clases de dominio XML (Factura, InfoTributaria, etc.)
+                 a partir del factura_V2.1.0.xsd real del SRI (ver README de
+                 src/main/resources/xsd). -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>jaxb2-maven-plugin</artifactId>
+                <version>2.5.0</version>
+                <executions>
+                    <execution>
+                        <id>generar-clases-comprobante</id>
+                        <goals>
+                            <goal>xjc</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>src/main/resources/xsd/factura_V2.1.0.xsd</source>
+                            </sources>
+                            <packageName>com.openbravo.pos.sri.xml.generado</packageName>
+                            <clearOutputDir>false</clearOutputDir>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Genera los stubs del cliente SOAP a partir del WSDL real del
+                 SRI (descargado el 2026-07-06 desde el ambiente de pruebas
+                 celcer.sri.gob.ec, confirmado como oficial por la ficha
+                 tecnica v2.32). -->
+            <plugin>
+                <groupId>org.apache.cxf</groupId>
+                <artifactId>cxf-codegen-plugin</artifactId>
+                <version>${cxf.version}</version>
+                <executions>
+                    <execution>
+                        <id>generar-clientes-soap</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>wsdl2java</goal>
+                        </goals>
+                        <configuration>
+                            <wsdlOptions>
+                                <wsdlOption>
+                                    <wsdl>src/main/resources/wsdl/RecepcionComprobantesOffline.wsdl</wsdl>
+                                    <packagenames>
+                                        <packagename>com.openbravo.pos.sri.soap.recepcion</packagename>
+                                    </packagenames>
+                                </wsdlOption>
+                                <wsdlOption>
+                                    <wsdl>src/main/resources/wsdl/AutorizacionComprobantesOffline.wsdl</wsdl>
+                                    <packagenames>
+                                        <packagename>com.openbravo.pos.sri.soap.autorizacion</packagename>
+                                    </packagenames>
+                                </wsdlOption>
+                            </wsdlOptions>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Empaqueta un jar unico con todas las dependencias, para poder
+                 dejarlo caer en el classpath de ECOPos sin gestionar 15 jars
+                 sueltos -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.3</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
