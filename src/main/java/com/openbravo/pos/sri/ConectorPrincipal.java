@@ -56,7 +56,7 @@ public final class ConectorPrincipal {
     private static final Path CONFIG_EMISOR_POR_DEFECTO = Path.of("config/datos-emisor.properties");
     private static final Path CONFIG_CONEXION_POR_DEFECTO = Path.of("config/conexion.properties");
     private static final Path CONFIG_CORREO_POR_DEFECTO = Path.of("config/correo.properties");
-    private static final Path CARPETA_PENDIENTES_POR_DEFECTO = Path.of("sri-conector/pendientes");
+    private static final Path CARPETA_PENDIENTES_POR_DEFECTO = Path.of("pendientes");
 
     private static final int MAX_INTENTOS_REINTENTO = 5;
     private static final long INTERVALO_REINTENTOS_MINUTOS = 15;
