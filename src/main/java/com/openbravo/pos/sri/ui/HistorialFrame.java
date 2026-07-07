@@ -95,6 +95,7 @@ public class HistorialFrame extends JFrame {
         tabla.setDefaultRenderer(Object.class, new RenderizadorPorEstado());
         tabla.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
         tabla.getColumnModel().getColumn(5).setPreferredWidth(280);
+        tabla.getColumnModel().getColumn(6).setPreferredWidth(130);
         tabla.getColumnModel().getColumn(8).setPreferredWidth(200);
         tabla.getColumnModel().getColumn(9).setPreferredWidth(250);
         tabla.getSelectionModel().addListSelectionListener(e -> actualizarBotones());
