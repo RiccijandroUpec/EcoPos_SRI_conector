@@ -197,6 +197,25 @@
                         <goals>
                             <goal>shade</goal>
                         </goals>
+                        <configuration>
+                            <!-- Sin esto, el jar sombreado no arranca en absoluto:
+                                 varias dependencias vienen firmadas, y al fusionar
+                                 todas las clases en un solo jar sus firmas (.SF/.DSA/.RSA)
+                                 ya no coinciden con el manifiesto resultante, lo que
+                                 produce "SecurityException: Invalid signature file
+                                 digest for Manifest main attributes" al lanzarlo -
+                                 confirmado con una ejecucion real. -->
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
