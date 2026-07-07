@@ -81,7 +81,7 @@ las ventas registradas en ECOPos.
 | Firma XAdES-BES (`XadesBesSigner`) | ✅ **Escrito y probado con una firma real** (certificado autofirmado generado con `keytool` en el test, no un mock) — 3 tests, incluye verificar que usa **RSA-SHA1** (no el SHA-256 por defecto de xades4j) tal como exige la sección 6.8/Anexo 14 de la ficha técnica. Ver notas técnicas abajo sobre el conflicto de runtime JAXB con xades4j |
 | `ConfiguracionLoader` (lee/escribe `datos-emisor.properties` ↔ `DatosEmisor`) | ✅ **Escrito y probado** — 4 tests con round-trip real a disco (`@TempDir`), incluyendo verificar que la clave del certificado nunca queda en texto plano en el archivo (`ClaveCifrador`, AES-GCM) |
 | Pantalla Swing de configuración (`ConfiguracionFrame`) | ✅ Escrita y compila; carga/guarda contra `ConfiguracionLoader` — se usó para guardar los datos reales del emisor que llevaron al AUTORIZADO real de abajo, así que su lógica sí está probada. **No se pudo verificar visualmente en este entorno** (ver nota al final del documento). Se abre desde EcoPos vía botón (Administración > Sistema), ver fila siguiente |
-| Clase orquestadora `ConectorPrincipal` (une todo en un proceso que corra continuamente) | ✅ **Escrita y probada de punta a punta contra servicios reales, con resultado AUTORIZADO** (MySQL real + certificado real acreditado + servidor real de pruebas del SRI, no mocks) — ver hallazgo abajo con los 4 bugs reales encontrados y corregidos en el camino |
+| Clase orquestadora `ConectorPrincipal` (une todo en un proceso que corra continuamente) | ✅ **Escrita y probada de punta a punta contra servicios reales, con resultado AUTORIZADO** (MySQL real + certificado real acreditado + servidor real de pruebas del SRI, no mocks) — ver hallazgo abajo con los 4 bugs reales encontrados y corregidos en el camino. **Corriendo de verdad como proceso persistente** desde `sri-conector/` (no solo invocado por harnesses de prueba) — encontró y corrigió un quinto bug real (carpeta de pendientes mal resuelta, ver hallazgo más abajo). Sigue faltando dejarlo como tarea programada/servicio de Windows que sobreviva un reinicio |
 | Botón en EcoPos para abrir `ConfiguracionFrame` (Administración > Sistema) | ✅ **Escrito y probado** — hook data-only (`SriConnectorConfig.bs` + `Menu.Root`/`Role.Administrator` en el repo de EcoPos), lanza el jar del conector como proceso externo. Confirmado con un lanzamiento real (título de ventana verificado vía la tabla de procesos del SO) |
 | Botones "Facturar SRI: SI/NO" en la pantalla de venta de EcoPos | ✅ **Rediseñados como interruptor GLOBAL persistente, con íconos** — ya no son botones de solo texto ni marcan un atributo por-ticket (eso reseteaba a "NO" en cada venta nueva). Ahora escriben en un archivo compartido (`sri-conector/facturacion-global.properties`, clave `activo`) que `Ticket.Close.xml` lee directo: una vez en SI, aplica a **todas** las ventas hasta que alguien presione NO (elegido así explícitamente por el usuario, sin excepción por ticket). Íconos propios (`img.sriinvoiceon`/`img.sriinvoiceoff`, check verde / X gris, ver "Hallazgo: límite del framework de botones" abajo) insertados como filas nuevas en `RESOURCES`. El botón SI sigue ofreciendo capturar el correo del cliente para esa venta puntual si su perfil no tiene uno guardado. El ticket siempre se imprime igual, sin importar este ajuste. **No verificado visualmente en la pantalla de venta real** (mismo límite de sandbox que `ConfiguracionFrame`, ver nota abajo) |
 | Historial de facturación (`HistorialFrame`) | ✅ **Escrito y probado** — lista todo `ecopos_sri_comprobantes` (facturas y notas de crédito), colorea por estado, y marca en naranja los comprobantes ENVIADO/ERROR con más de 24h sin resolverse (aviso operativo, no una cita textual de un plazo legal del SRI) |
@@ -244,6 +244,42 @@ comprobando que el tamaño coincide exactamente con el archivo fuente
 `src/main/resources/iconos-ecopos/` de este repo solo como respaldo/para
 regenerarlos - no se cargan desde ahí en tiempo de ejecución.
 
+## ⚠️ Hallazgo real: `ConectorPrincipal` vigilaba la carpeta equivocada
+
+Al arrancar `ConectorPrincipal` de verdad como proceso persistente por
+primera vez (antes solo se había probado invocando `procesarTicket(...)`
+directamente desde harnesses de prueba, nunca corriendo `main()` de
+principio a fin en segundo plano), el log mostró:
+
+```
+Vigilando carpeta de pendientes: C:\xampp\htdocs\EcoPos\sri-conector\sri-conector\pendientes
+```
+
+`sri-conector` duplicado - carpeta que nunca iba a tener nada adentro.
+Causa: `CARPETA_PENDIENTES_POR_DEFECTO` estaba fijada a
+`"sri-conector/pendientes"`, asumiendo un directorio de trabajo (`dirname.path`
+de EcoPos, un nivel arriba de `sri-conector/`) distinto al que realmente
+usan `CONFIG_EMISOR_POR_DEFECTO`/`CONFIG_CONEXION_POR_DEFECTO`/
+`CONFIG_CORREO_POR_DEFECTO` (todas `"config/..."`, relativas a estar
+parado *dentro* de `sri-conector/` - el mismo directorio de trabajo con el
+que se lanzan `ConfiguracionFrame`/`HistorialFrame` desde sus hooks
+`.bs`). Dos convenciones de ruta contradictorias en la misma clase.
+
+**Arreglado**: `CARPETA_PENDIENTES_POR_DEFECTO` ahora es solo `"pendientes"`,
+consistente con las demás rutas por defecto. Verificado relanzando el
+proceso real: el log ahora muestra `Vigilando carpeta de pendientes:
+C:\xampp\htdocs\EcoPos\sri-conector\pendientes` (sin duplicar), y un ticket
+ya AUTORIZADO que tenía un flag viejo pendiente se procesó (idempotente,
+no reintentó de más) y el flag se limpió solo.
+
+De paso se encontró que **MySQL de XAMPP se había caído** (el proceso
+`mysqld` seguía "vivo" pero ya no aceptaba conexiones en el puerto 3306,
+sin nada en el log de error que lo explicara) - se reinició con
+`mysql_start.bat` y los datos quedaron intactos (verificado contando filas
+en `ecopos_sri_comprobantes`/`TICKETS` antes y después). Sin relación con
+el bug de la ruta, pero hubiera bloqueado igual la primera prueba real del
+servicio persistente si no se corregía.
+
 ## Siguiente paso inmediato
 
 **Pendientes que requieren confirmación/prueba humana (nada de esto se
@@ -269,9 +305,13 @@ puede resolver solo con más código):**
    en la instalación real donde corra el conector — `ConectorPrincipal`
    usa `localhost`/`3306`/`ecopos`/`root`/`` como valores por defecto si el
    archivo no existe, pensado para XAMPP local, no para producción.
-6. Dejar `ConectorPrincipal` corriendo de forma continua junto a EcoPos
-   (tarea programada de Windows, servicio, o similar) - hasta ahora solo se
-   ha probado lanzándolo a mano para cada ticket.
+6. **Dejar `ConectorPrincipal` corriendo de forma continua como un servicio
+   de verdad** (tarea programada de Windows, servicio, o similar) - por
+   ahora se lanzó a mano en segundo plano (`java -cp
+   ecopos-sri-connector.jar com.openbravo.pos.sri.ConectorPrincipal`,
+   working directory `sri-conector/`) para dejarlo vigilando, pero no
+   sobrevive un reinicio de la máquina ni se reinicia solo si se cae. Antes
+   de este arranque real se encontró y corrigió un bug real (ver abajo).
 
 **Limitaciones conocidas, no bloqueantes pero buenas de tener presentes:**
 
