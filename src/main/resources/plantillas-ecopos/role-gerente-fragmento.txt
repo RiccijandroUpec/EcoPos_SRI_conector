@@ -1,0 +1,3 @@
+    <class name="button.sriinvoiceon"/>
+    <class name="button.sriinvoiceoff"/>
+    <class name="/com/openbravo/pos/templates/SriConnectorHistorial.bs"/>

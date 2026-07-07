@@ -4,6 +4,10 @@ Módulo Java **independiente** (Maven, propio jar) que emite facturación
 electrónica ante el SRI (Servicio de Rentas Internas, Ecuador) a partir de
 las ventas registradas en ECOPos.
 
+**¿Vas a instalar esto en la computadora de un negocio?** Ve directo a
+[`INSTALAR.md`](INSTALAR.md) - esta guía de abajo es para quien desarrolla
+el conector, no para quien lo instala.
+
 ## Tecnologías y herramientas
 
 | Categoría | Herramienta | Versión | Para qué |
@@ -91,6 +95,9 @@ las ventas registradas en ECOPos.
 | Envío por correo (`NotificadorCorreo`, `ConfiguracionCorreoFrame`) | ✅ Escrito y compila (jakarta.mail/SMTP) — botón "Enviar por correo" en el Historial, config propia en `correo.properties` (clave cifrada igual que el certificado). **No probado contra un servidor SMTP real todavía** |
 | Envío automático al cliente al quedar AUTORIZADO | ✅ **Escrito** (`ConectorPrincipal.intentarEnvioAutomaticoPorCorreo`) — si el cliente del ticket tiene correo (el de su perfil `CUSTOMERS.EMAIL`, o el que el cajero ingresó al activar "Facturar SRI: SI" si no tenía uno) y existe `config/correo.properties`, se le manda el XML+RIDE apenas el SRI autoriza, sin acción manual. El correo se lee de `RECEIPTS.ATTRIBUTES` (formato `Properties.storeToXML` de ECOPos, sin depender de sus clases). Un fallo de correo nunca afecta el resultado ya resuelto ante el SRI. **No probado contra un servidor SMTP real todavía** (mismo pendiente que el botón manual) |
 | Reintento manual desde el Historial | ✅ Escrito — botón "Reintentar envío" para FACTURA en ERROR/RECHAZADO/ENVIADO, reusa `ConectorPrincipal.procesarTicket` (relee el ticket de ECOPos, así que recoge correcciones hechas desde la última vez) |
+| **Servicio de Windows** (`servicio-windows/`, WinSW) | ✅ **Instalado y probado de verdad** — `ConectorPrincipal` corre como servicio real (arranque automático, se reinicia solo si se cae), no como proceso manual en una terminal. Probado instalar/iniciar/detener/reiniciar, logs con rotación. Pendiente: probar en una máquina limpia distinta a esta |
+| **Instalador auto-contenido** (`InstaladorEcoPos`) | ✅ **Escrito y probado dos veces de punta a punta** (contra una base de prueba limpia simulando una instalación existente, y contra la base real de este negocio) — sincroniza de forma idempotente `Menu.Root`/`Ticket.Buttons`/`Ticket.Close`/los scripts SI-NO/sus íconos/permisos de rol, y crea la tabla propia del conector. No depende de tener el repo de EcoPos a mano (plantillas empaquetadas en este jar, `src/main/resources/plantillas-ecopos/`) |
+| **Instalación nueva de EcoPos (desde cero)** | ✅ `MySQL-create.sql` (repo de EcoPos) actualizado para incluir los 4 recursos que faltaban (`script.SriInvoiceOn/Off`, `img.sriinvoiceon/off`) - `Menu.Root`/`Ticket.Buttons`/`Ticket.Close`/`Role.*` ya estaban al día en sus archivos plantilla. **No probado instalando un EcoPos realmente desde cero** (solo se verificó leyendo el script SQL) - `InstaladorEcoPos` de todas formas crea la tabla propia del conector después, en ambos escenarios |
 
 ## ⚠️ Hallazgo importante: el WSDL oficial no coincide con el servidor real
 
@@ -305,13 +312,14 @@ puede resolver solo con más código):**
    en la instalación real donde corra el conector — `ConectorPrincipal`
    usa `localhost`/`3306`/`ecopos`/`root`/`` como valores por defecto si el
    archivo no existe, pensado para XAMPP local, no para producción.
-6. **Dejar `ConectorPrincipal` corriendo de forma continua como un servicio
-   de verdad** (tarea programada de Windows, servicio, o similar) - por
-   ahora se lanzó a mano en segundo plano (`java -cp
-   ecopos-sri-connector.jar com.openbravo.pos.sri.ConectorPrincipal`,
-   working directory `sri-conector/`) para dejarlo vigilando, pero no
-   sobrevive un reinicio de la máquina ni se reinicia solo si se cae. Antes
-   de este arranque real se encontró y corrigió un bug real (ver abajo).
+6. **Probar una instalación de EcoPos realmente desde cero** (no una
+   actualización) con `MySQL-create.sql` ya actualizado, para confirmar que
+   los botones/menús/permisos quedan andando de una sin correr
+   `InstaladorEcoPos` a mano - solo se verificó leyendo el script SQL, no
+   ejecutándolo contra una base nueva de verdad.
+7. Probar `servicio-windows/` (WinSW) en una máquina distinta a esta -
+   aquí se probó instalar/iniciar/detener/reiniciar con resultado
+   correcto, pero siempre en la misma máquina de desarrollo.
 
 **Limitaciones conocidas, no bloqueantes pero buenas de tener presentes:**
 
