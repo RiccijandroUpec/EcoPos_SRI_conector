@@ -1,6 +1,6 @@
 package com.openbravo.pos.sri;
 
-import com.mysql.cj.jdbc.MysqlDataSource;
+import com.openbravo.pos.sri.config.ConexionLoader;
 import com.openbravo.pos.sri.config.ConfiguracionLoader;
 import com.openbravo.pos.sri.dominio.Comprobante;
 import com.openbravo.pos.sri.dominio.DatosEmisor;
@@ -21,15 +21,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -256,36 +253,10 @@ public final class ConectorPrincipal {
         Path carpetaPendientes = args.length > 2 ? Path.of(args[2]) : CARPETA_PENDIENTES_POR_DEFECTO;
 
         DatosEmisor emisor = ConfiguracionLoader.cargar(archivoEmisor);
-        javax.sql.DataSource dataSource = cargarDataSource(archivoConexion);
+        javax.sql.DataSource dataSource = ConexionLoader.cargar(archivoConexion);
 
         ConectorPrincipal conector = new ConectorPrincipal(emisor, dataSource);
         LOG.info("ecopos-sri-connector iniciado (ambiente={}, ruc={})", emisor.getAmbiente(), emisor.getRuc());
         conector.iniciar(carpetaPendientes);
-    }
-
-    /**
-     * Datos de conexion a la MISMA base de datos MySQL/MariaDB de ECOPos
-     * (host/puerto/nombre/usuario/clave), leidos de un {@code .properties}
-     * separado de {@code datos-emisor.properties} porque son datos de
-     * infraestructura, no del emisor SRI. Si el archivo no existe, se usan
-     * los valores por defecto de una instalacion XAMPP tipica.
-     */
-    private static javax.sql.DataSource cargarDataSource(Path archivoConexion) throws IOException, SQLException {
-        Properties propiedades = new Properties();
-        if (Files.exists(archivoConexion)) {
-            try (InputStream entrada = Files.newInputStream(archivoConexion)) {
-                propiedades.load(entrada);
-            }
-        } else {
-            LOG.warn("No existe {}, se usan valores por defecto de conexion (localhost/ecopos/root)", archivoConexion);
-        }
-
-        MysqlDataSource dataSource = new MysqlDataSource();
-        dataSource.setServerName(propiedades.getProperty("host", "localhost"));
-        dataSource.setPort(Integer.parseInt(propiedades.getProperty("puerto", "3306")));
-        dataSource.setDatabaseName(propiedades.getProperty("baseDatos", "ecopos"));
-        dataSource.setUser(propiedades.getProperty("usuario", "root"));
-        dataSource.setPassword(propiedades.getProperty("clave", ""));
-        return dataSource;
     }
 }

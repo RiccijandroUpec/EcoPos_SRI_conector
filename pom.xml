@@ -95,6 +95,26 @@
             <version>${mysql.version}</version>
         </dependency>
 
+        <!-- RIDE (representacion impresa del comprobante, Anexo 2 de la ficha
+             tecnica) - PDFBox (Apache 2.0) para el PDF, ZXing (Apache 2.0)
+             para el codigo de barras GS1-128 de la clave de acceso que la
+             ficha tecnica recomienda (seccion 8.20/8.21). -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>2.0.31</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+
         <!-- Logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
