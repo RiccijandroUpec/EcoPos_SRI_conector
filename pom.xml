@@ -40,13 +40,34 @@
             <artifactId>jaxb-api</artifactId>
             <version>2.3.1</version>
         </dependency>
+        <!-- Runtime JAXB para el namespace javax (CXF / clases generadas del
+             XSD): se usa com.sun.xml.bind:jaxb-impl en vez de
+             org.glassfish.jaxb:jaxb-runtime a proposito, para dejar libre
+             ese groupId:artifactId para la version jakarta que xades4j
+             necesita (ver mas abajo) - ambas versiones de
+             org.glassfish.jaxb:jaxb-runtime no pueden convivir en el mismo
+             classpath. -->
         <dependency>
-            <groupId>org.glassfish.jaxb</groupId>
-            <artifactId>jaxb-runtime</artifactId>
+            <groupId>com.sun.xml.bind</groupId>
+            <artifactId>jaxb-impl</artifactId>
             <version>${jaxb.version}</version>
         </dependency>
 
-        <!-- Firma electronica XAdES-BES sobre el XML del comprobante -->
+        <!-- Firma electronica XAdES-BES sobre el XML del comprobante.
+             xades4j 2.4.0 usa internamente jakarta.xml.bind (no javax,
+             el namespace que usan CXF/jaxb2-maven-plugin en este proyecto -
+             ver notas del README). Son paquetes distintos que coexisten sin
+             chocar; hace falta declarar API + runtime jakarta por separado. -->
+        <dependency>
+            <groupId>jakarta.xml.bind</groupId>
+            <artifactId>jakarta.xml.bind-api</artifactId>
+            <version>4.0.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+            <version>4.0.4</version>
+        </dependency>
         <dependency>
             <groupId>com.googlecode.xades4j</groupId>
             <artifactId>xades4j</artifactId>

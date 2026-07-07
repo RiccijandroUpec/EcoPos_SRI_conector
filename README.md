@@ -68,7 +68,7 @@ las ventas registradas en ECOPos.
 | Mapeo `TicketCrudo` → `Comprobante` (`TicketComprobanteMapper`) | ✅ **Escrito y probado** — 5 tests, más una prueba manual de la cadena completa `TicketCrudo → Comprobante → XML` con dos líneas de distinta tarifa (15% y exenta), agrupadas correctamente en dos `<totalImpuesto>`. Resuelve tipo de identificación del cliente por longitud (`TipoIdentificacionResolver`) y forma de pago por heurística de nombre (`FormaPagoResolver`) — **ambas heurísticas deben revisarse contra los datos reales de cada instalación antes de producción** |
 | `secuencial` en `ecopos_sri_comprobantes` | ✅ Columna agregada (no existía) + `ComprobanteRepository.siguienteSecuencial()` (MAX+1, sin bloqueo — suficiente mientras el conector procese un ticket a la vez) |
 | `SoapClient` (envoltorio sobre los stubs CXF) | ✅ **Escrito y probado contra el servidor real de pruebas del SRI** (`celcer.sri.gob.ec`, no solo compilación) — ver hallazgo importante abajo |
-| Firma XAdES-BES | ⏳ Siguiente paso |
+| Firma XAdES-BES (`XadesBesSigner`) | ✅ **Escrito y probado con una firma real** (certificado autofirmado generado con `keytool` en el test, no un mock) — 3 tests, incluye verificar que usa **RSA-SHA1** (no el SHA-256 por defecto de xades4j) tal como exige la sección 6.8/Anexo 14 de la ficha técnica. Ver notas técnicas abajo sobre el conflicto de runtime JAXB con xades4j |
 | `ConfiguracionLoader` (lee `datos-emisor.properties` → `DatosEmisor`) | ⏳ Siguiente paso |
 | Pantalla Swing de configuración | ⏳ Siguiente paso — falta decidir cómo la abre el administrador (standalone vs. botón-hook en ECOPos) |
 | Clase `Main`/orquestador (une todo en un proceso que corra continuamente) | ⏳ Siguiente paso — **no existe todavía en absoluto** |
@@ -103,14 +103,13 @@ re-aplicar este mismo ajuste antes de regenerar los stubs.
 
 1. Ejecuta `src/main/resources/sql/001_create_ecopos_sri_comprobantes.sql`
    (actualizado, incluye la columna `secuencial`) contra la base `ecopos`.
-2. Firma XAdES-BES sobre el XML ya generado (`FacturaXmlWriter.toXml(...)`),
-   antes de enviarlo.
-3. `ConfiguracionLoader` + pantalla Swing para que el administrador cargue
+2. `ConfiguracionLoader` + pantalla Swing para que el administrador cargue
    `DatosEmisor` (RUC, razón social, establecimiento, certificado `.p12`)
    sin editar un `.properties` a mano.
-4. La clase `Main`/orquestador que una `VigilantePendientes` +
+3. La clase `Main`/orquestador que una `VigilantePendientes` +
    `TicketReader` + `TicketComprobanteMapper` + `ComprobanteXmlMapper` +
-   firma + `SoapClient` + `ComprobanteRepository` en un solo proceso.
+   `XadesBesSigner` + `SoapClient` + `ComprobanteRepository` en un solo
+   proceso.
 
 ## Notas técnicas de esta iteración (2026-07-06)
 
@@ -130,10 +129,30 @@ re-aplicar este mismo ajuste antes de regenerar los stubs.
   3.1.0 por defecto genera `jakarta.xml.bind` — ambos en el mismo proyecto
   chocan. Se resolvió bajando `jaxb2-maven-plugin` a **2.5.0** (también
   genera `javax.xml.bind`) y ajustando las dependencias del proyecto a
-  `javax.xml.bind:jaxb-api:2.3.1` + `org.glassfish.jaxb:jaxb-runtime:2.3.9`,
-  de modo que los tres generadores (dominio propio, CXF, JAXB) usen el
-  mismo namespace. Si en el futuro se sube a JDK 17 y CXF 4.x, hay que revertir
+  `javax.xml.bind:jaxb-api:2.3.1` + `com.sun.xml.bind:jaxb-impl:2.3.9`,
+  de modo que los generadores de dominio propio/CXF/JAXB usen el mismo
+  namespace. Si en el futuro se sube a JDK 17 y CXF 4.x, hay que revertir
   este cambio a `jakarta.xml.bind-api`.
+- **xades4j 2.4.0 necesita el namespace `jakarta.xml.bind` por dentro**
+  (para su propio marshalling interno de las propiedades XAdES), un
+  namespace *distinto* al que usan CXF/JAXB en este proyecto. No es un
+  choque real (son paquetes de nombres diferentes que coexisten en el mismo
+  classpath), pero hacen falta **ambos** declarados: la API
+  (`jakarta.xml.bind:jakarta.xml.bind-api:4.0.2`) y un runtime real que la
+  implemente (`org.glassfish.jaxb:jaxb-runtime:4.0.4`) — por eso el runtime
+  javax se cambió de `org.glassfish.jaxb:jaxb-runtime` a
+  `com.sun.xml.bind:jaxb-impl` (mismo groupId:artifactId no puede tener dos
+  versiones a la vez en el classpath).
+- **La firma XAdES-BES por defecto de xades4j usa SHA-256**, pero la ficha
+  técnica del SRI (sección 6.8, Anexo 14) exige **RSA-SHA1** explícitamente.
+  Se configuró `SignatureAlgorithms` en `XadesBesSigner` para forzar
+  `rsa-sha1`/`sha1` en vez del default — verificado con una firma real y un
+  test dedicado (`usaRsaSha1ComoExigeLaFichaTecnica`).
+- **El DOM no sabe que `id="comprobante"` es un atributo de tipo ID** sin
+  DTD/XSD durante el parseo — sin `Element.setIdAttribute("id", true)`
+  explícito antes de firmar, XML-DSig falla con
+  `Cannot resolve element with ID comprobante` al intentar resolver la
+  referencia `#comprobante` del Anexo 14.
 
 ## Cómo se prueba de forma independiente
 
