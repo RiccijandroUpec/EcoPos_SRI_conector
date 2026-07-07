@@ -20,7 +20,7 @@ las ventas registradas en ECOPos.
 | Empaquetado | `maven-shade-plugin` | 3.5.3 | Genera un jar único con todas las dependencias, para poder soltarlo en un classpath sin gestionar ~15 jars sueltos |
 
 **Fuentes de datos oficiales usadas (no fabricadas a mano):**
-- **XSD** (`factura_V2.1.0.xsd` + `xmldsig-core-schema.xsd`): vendorizados desde el repo open-source (Apache-2.0) [`xprl-gjf/sri-efactura-core`](https://github.com/xprl-gjf/sri-efactura-core) — `www.sri.gob.ec` no es alcanzable desde este entorno de red. Verificado campo por campo contra la ficha técnica oficial v2.32.
+- **XSD** (`factura_V2.1.0.xsd`, `notaCredito_V1.1.0.xsd` + `xmldsig-core-schema.xsd`): vendorizados desde el repo open-source (Apache-2.0) [`xprl-gjf/sri-efactura-core`](https://github.com/xprl-gjf/sri-efactura-core) — `www.sri.gob.ec` no es alcanzable desde este entorno de red. Verificado campo por campo contra la ficha técnica oficial v2.32. La Nota de Crédito no tiene una versión 2.x en ese mirror (a diferencia de factura); 1.1.0 es la más reciente disponible.
 - **WSDL** (`RecepcionComprobantesOffline.wsdl`, `AutorizacionComprobantesOffline.wsdl`): descargados directamente con `curl` desde `celcer.sri.gob.ec` (ambiente de pruebas), URLs confirmadas oficiales por la misma ficha técnica (sección 7.2.1).
 - **Ficha técnica del SRI** v2.32 (octubre 2025): fuente de las tablas de catálogo (`FormaPago`, `TipoComprobante`, códigos de IVA) y de la estructura exacta de cada tag XML.
 
@@ -74,6 +74,12 @@ las ventas registradas en ECOPos.
 | Clase orquestadora `ConectorPrincipal` (une todo en un proceso que corra continuamente) | ✅ **Escrita y probada de punta a punta contra servicios reales, con resultado AUTORIZADO** (MySQL real + certificado real acreditado + servidor real de pruebas del SRI, no mocks) — ver hallazgo abajo con los 4 bugs reales encontrados y corregidos en el camino |
 | Botón en EcoPos para abrir `ConfiguracionFrame` (Administración > Sistema) | ✅ **Escrito y probado** — hook data-only (`SriConnectorConfig.bs` + `Menu.Root`/`Role.Administrator` en el repo de EcoPos), lanza el jar del conector como proceso externo. Confirmado con un lanzamiento real (título de ventana verificado vía la tabla de procesos del SO) |
 | Botones "Facturar SRI: SI/NO" en la pantalla de venta de EcoPos | ✅ **Escritos y probados con un ticket real** — hook data-only (`script.SriInvoiceOn/Off.txt` + `Ticket.Buttons`/3 roles en el repo de EcoPos), marcan un atributo por ticket que `Ticket.Close` lee para decidir si factura. Por defecto NO factura si el cajero no toca el control; el ticket siempre se imprime igual |
+| Historial de facturación (`HistorialFrame`) | ✅ **Escrito y probado** — lista todo `ecopos_sri_comprobantes` (facturas y notas de crédito), colorea por estado, y marca en naranja los comprobantes ENVIADO/ERROR con más de 24h sin resolverse (aviso operativo, no una cita textual de un plazo legal del SRI) |
+| RIDE en PDF (`RideGenerator` / `RideNotaCreditoGenerator`) | ✅ **Escrito y verificado** (render-a-imagen con `PDFRenderer`, no solo extracción de texto) contra un layout de referencia real de otro sistema — cubre fecha/hora de autorización, subtotales por tarifa/tipo de impuesto (con IVA/ICE/IRBPNR etiquetados por su código real), código auxiliar y detalle adicional por línea, subsidio, e Información Adicional |
+| **Nota de Crédito (anulación de facturas)** (`AnulacionService`, `NotaCreditoXmlMapper`, `AnulacionFrame`) | ✅ **Escrita y probada de punta a punta contra el SRI real** (firma, Recepción, Autorización) — el SRI la **rechazó** con `69: ERROR EN LA IDENTIFICACION DEL RECEPTOR` al anular una factura emitida a "CONSUMIDOR FINAL" (ver hallazgo abajo). El flujo técnico (XML válido, firma, envío, consulta) funciona; falta confirmar con un comprador identificado si el rechazo es por eso |
+| `notaCredito_V1.1.0.xsd` | ✅ Vendorizado desde el mismo mirror que `factura_V2.1.0.xsd` (`xprl-gjf/sri-efactura-core`) — paquete Java propio (`xml.generado.notacredito`) porque comparte nombres de tipo con el XSD de factura pero con forma distinta |
+| Envío por correo (`NotificadorCorreo`, `ConfiguracionCorreoFrame`) | ✅ Escrito y compila (jakarta.mail/SMTP) — botón "Enviar por correo" en el Historial, config propia en `correo.properties` (clave cifrada igual que el certificado). **No probado contra un servidor SMTP real todavía** |
+| Reintento manual desde el Historial | ✅ Escrito — botón "Reintentar envío" para FACTURA en ERROR/RECHAZADO/ENVIADO, reusa `ConectorPrincipal.procesarTicket` (relee el ticket de ECOPos, así que recoge correcciones hechas desde la última vez) |
 
 ## ⚠️ Hallazgo importante: el WSDL oficial no coincide con el servidor real
 
@@ -156,22 +162,58 @@ documenta el procedimiento completo (queda `@Disabled` a propósito, no corre
 en CI). Recuerda borrar los datos de prueba de la base `ecopos` al terminar
 — no lo hace el test automáticamente.
 
+## ⚠️ Hallazgo real: el SRI rechaza una Nota de Crédito a "CONSUMIDOR FINAL"
+
+Se ejecutó `AnulacionService.anular(...)` contra datos 100% reales (mismo
+certificado, mismo servidor de pruebas real, misma factura ya AUTORIZADA de
+la prueba anterior). El flujo técnico funcionó de punta a punta - XML
+válido, firma correcta, Recepción respondió `RECIBIDA` - pero la
+Autorización volvió:
+
+```
+Estado: NO AUTORIZADO | 69: ERROR EN LA IDENTIFICACION DEL RECEPTOR
+```
+
+La factura que se intentó anular fue emitida a **CONSUMIDOR FINAL**
+(`tipoIdentificacionComprador=07`, `identificacionComprador=9999999999999`) -
+exactamente esos mismos datos, sin cambiar nada, es lo que el SRI ya había
+AUTORIZADO en la factura original. La hipótesis más probable (**no
+confirmada** - no se pudo consultar la documentación oficial del SRI desde
+este entorno de red, y no se volvió a probar con un comprador identificado
+para no gastar otra transacción real) es que **el SRI no permite emitir una
+Nota de Crédito contra un comprador "consumidor final" genérico** - a
+diferencia de una factura, una nota de crédito necesitaría un comprador
+identificable (cédula/RUC real) para ser trazable.
+
+**Antes de confiar en la anulación para facturas reales**: prueba
+`AnulacionService` contra una factura emitida a un comprador con
+cédula/RUC real (no consumidor final) y confirma si el rechazo 69
+desaparece. Si se confirma la hipótesis, `AnulacionFrame` debería advertir
+o bloquear el intento cuando la factura original sea a consumidor final,
+en vez de dejar que el usuario descubra el rechazo despues de una llamada
+real al SRI.
+
 ## Siguiente paso inmediato
 
-1. **Probar el ambiente de Producción** una vez que el negocio esté listo
+1. **Confirmar el hallazgo de arriba** (Nota de Crédito vs. consumidor
+   final) con una factura real a un comprador identificado.
+2. **Probar el ambiente de Producción** una vez que el negocio esté listo
    para emitir facturas reales (hasta ahora todo se probó en `PRUEBAS` a
    propósito).
-2. **Corre `ConfiguracionFrame` tú mismo y confirma que el layout se ve bien**
+3. **Corre `ConfiguracionFrame` tú mismo y confirma que el layout se ve bien**
    (no se pudo verificar visualmente en esta sesión, ver nota abajo) -
    aunque ya se confirmó indirectamente que funciona: se usó para guardar
    los datos reales del emisor que llevaron a la prueba de arriba.
-3. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
+4. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
    en la instalación real donde corra el conector — `ConectorPrincipal`
    usa `localhost`/`3306`/`ecopos`/`root`/`` como valores por defecto si el
    archivo no existe, pensado para XAMPP local, no para producción.
-4. Dejar `ConectorPrincipal` corriendo de forma continua junto a EcoPos
+5. Dejar `ConectorPrincipal` corriendo de forma continua junto a EcoPos
    (tarea programada de Windows, servicio, o similar) - hasta ahora solo se
    ha probado lanzándolo a mano para cada ticket.
+6. **Probar el envío por correo contra un servidor SMTP real** (solo se
+   verificó que compila, `NotificadorCorreo` no se ha probado con
+   credenciales SMTP reales todavía).
 
 ## Nota: verificación visual de `ConfiguracionFrame` no realizada
 

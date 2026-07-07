@@ -22,4 +22,13 @@ public enum TipoComprobante {
     public String getCodigo() {
         return codigo;
     }
+
+    public static TipoComprobante porCodigo(String codigo) {
+        for (TipoComprobante tipo : values()) {
+            if (tipo.codigo.equals(codigo)) {
+                return tipo;
+            }
+        }
+        throw new IllegalArgumentException("Codigo de tipo de comprobante desconocido: " + codigo);
+    }
 }

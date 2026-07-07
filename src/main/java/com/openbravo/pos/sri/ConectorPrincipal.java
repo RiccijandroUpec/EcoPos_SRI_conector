@@ -5,15 +5,14 @@ import com.openbravo.pos.sri.config.ConfiguracionLoader;
 import com.openbravo.pos.sri.dominio.Comprobante;
 import com.openbravo.pos.sri.dominio.DatosEmisor;
 import com.openbravo.pos.sri.dominio.EstadoComprobante;
+import com.openbravo.pos.sri.dominio.TipoComprobante;
+import com.openbravo.pos.sri.envio.EnvioComprobanteService;
 import com.openbravo.pos.sri.firma.XadesBesSigner;
 import com.openbravo.pos.sri.repository.ComprobanteRepository;
 import com.openbravo.pos.sri.repository.TicketCrudo;
 import com.openbravo.pos.sri.repository.TicketReader;
 import com.openbravo.pos.sri.scheduler.VigilantePendientes;
 import com.openbravo.pos.sri.soap.SoapClient;
-import com.openbravo.pos.sri.soap.autorizacion.Autorizacion;
-import com.openbravo.pos.sri.soap.autorizacion.RespuestaComprobante;
-import com.openbravo.pos.sri.soap.recepcion.RespuestaSolicitud;
 import com.openbravo.pos.sri.xml.ComprobanteXmlMapper;
 import com.openbravo.pos.sri.xml.FacturaXmlWriter;
 import com.openbravo.pos.sri.xml.TicketComprobanteMapper;
@@ -21,10 +20,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.SQLException;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executors;
@@ -56,20 +53,19 @@ public final class ConectorPrincipal {
 
     private static final int MAX_INTENTOS_REINTENTO = 5;
     private static final long INTERVALO_REINTENTOS_MINUTOS = 15;
-    private static final long ESPERA_ANTES_DE_CONSULTAR_AUTORIZACION_MS = 3000;
 
     private final DatosEmisor emisor;
     private final TicketReader ticketReader;
     private final ComprobanteRepository comprobanteRepository;
-    private final XadesBesSigner firmador;
-    private final SoapClient soapClient;
+    private final EnvioComprobanteService envioComprobanteService;
 
     public ConectorPrincipal(DatosEmisor emisor, javax.sql.DataSource dataSource) {
         this.emisor = emisor;
         this.ticketReader = new TicketReader(dataSource);
         this.comprobanteRepository = new ComprobanteRepository(dataSource);
-        this.firmador = new XadesBesSigner(emisor.getRutaCertificadoP12(), emisor.getClaveCertificado());
-        this.soapClient = new SoapClient(emisor.getAmbiente());
+        XadesBesSigner firmador = new XadesBesSigner(emisor.getRutaCertificadoP12(), emisor.getClaveCertificado());
+        SoapClient soapClient = new SoapClient(emisor.getAmbiente());
+        this.envioComprobanteService = new EnvioComprobanteService(firmador, soapClient, comprobanteRepository);
     }
 
     /**
@@ -144,7 +140,7 @@ public final class ConectorPrincipal {
         // cuando se corrige un rechazo (ficha tecnica, seccion 5.10).
         String secuencial = registroPrevio.isPresent()
                 ? registroPrevio.get().secuencial
-                : comprobanteRepository.siguienteSecuencial();
+                : comprobanteRepository.siguienteSecuencial(TipoComprobante.FACTURA);
 
         Comprobante comprobante = TicketComprobanteMapper.map(ticketCrudo.get(), emisor, secuencial);
 
@@ -163,88 +159,8 @@ public final class ConectorPrincipal {
         }
         comprobante.incrementarIntentos();
 
-        try {
-            String xmlSinFirmar = FacturaXmlWriter.toXml(ComprobanteXmlMapper.map(comprobante));
-            comprobante.setXmlGenerado(xmlSinFirmar);
-
-            String xmlFirmado = firmador.firmar(xmlSinFirmar);
-            comprobante.setXmlFirmado(xmlFirmado);
-
-            RespuestaSolicitud respuestaRecepcion =
-                    soapClient.enviarRecepcion(xmlFirmado.getBytes(StandardCharsets.UTF_8));
-
-            if (!"RECIBIDA".equalsIgnoreCase(respuestaRecepcion.getEstado())) {
-                comprobante.setEstado(EstadoComprobante.RECHAZADO);
-                comprobante.setMensajeError(resumirRecepcion(respuestaRecepcion));
-                comprobanteRepository.actualizarProgreso(comprobante);
-                LOG.warn("Ticket {} rechazado en Recepcion: {}", ticketId, comprobante.getMensajeError());
-                return;
-            }
-
-            comprobante.setEstado(EstadoComprobante.ENVIADO);
-            comprobanteRepository.actualizarProgreso(comprobante);
-
-            // El SRI no autoriza de forma sincrona con la recepcion; hay que
-            // esperar un momento antes de poder consultar la autorizacion.
-            Thread.sleep(ESPERA_ANTES_DE_CONSULTAR_AUTORIZACION_MS);
-
-            RespuestaComprobante respuestaAutorizacion = soapClient.consultarAutorizacion(comprobante.getClaveAcceso());
-            aplicarRespuestaAutorizacion(comprobante, respuestaAutorizacion);
-            comprobanteRepository.actualizarProgreso(comprobante);
-
-        } catch (Exception e) {
-            comprobante.setEstado(EstadoComprobante.ERROR);
-            comprobante.setMensajeError(e.toString());
-            comprobanteRepository.actualizarProgreso(comprobante);
-            throw e;
-        }
-    }
-
-    private void aplicarRespuestaAutorizacion(Comprobante comprobante, RespuestaComprobante respuesta) {
-        if (respuesta.getAutorizaciones() == null || respuesta.getAutorizaciones().getAutorizacion().isEmpty()) {
-            // Sin autorizaciones todavia (SRI aun procesando, "PPR"): se deja
-            // en ENVIADO para que el planificador de reintentos vuelva a
-            // consultar en el siguiente ciclo.
-            comprobante.setXmlRespuestaSri("Sin autorizacion todavia (en procesamiento)");
-            return;
-        }
-
-        Autorizacion autorizacion = respuesta.getAutorizaciones().getAutorizacion().get(0);
-        comprobante.setXmlRespuestaSri(autorizacion.getComprobante());
-
-        if ("AUTORIZADO".equalsIgnoreCase(autorizacion.getEstado())) {
-            comprobante.setEstado(EstadoComprobante.AUTORIZADO);
-            comprobante.setNumeroAutorizacion(autorizacion.getNumeroAutorizacion());
-            comprobante.setFechaAutorizacion(LocalDateTime.now());
-        } else {
-            comprobante.setEstado(EstadoComprobante.RECHAZADO);
-            comprobante.setMensajeError(resumirAutorizacion(autorizacion));
-        }
-    }
-
-    private static String resumirRecepcion(RespuestaSolicitud respuesta) {
-        StringBuilder resumen = new StringBuilder("Estado: ").append(respuesta.getEstado());
-        if (respuesta.getComprobantes() != null) {
-            for (var comprobante : respuesta.getComprobantes().getComprobante()) {
-                if (comprobante.getMensajes() == null) {
-                    continue;
-                }
-                for (var mensaje : comprobante.getMensajes().getMensaje()) {
-                    resumen.append(" | ").append(mensaje.getIdentificador()).append(": ").append(mensaje.getMensaje());
-                }
-            }
-        }
-        return resumen.toString();
-    }
-
-    private static String resumirAutorizacion(Autorizacion autorizacion) {
-        StringBuilder resumen = new StringBuilder("Estado: ").append(autorizacion.getEstado());
-        if (autorizacion.getMensajes() != null) {
-            for (var mensaje : autorizacion.getMensajes().getMensaje()) {
-                resumen.append(" | ").append(mensaje.getIdentificador()).append(": ").append(mensaje.getMensaje());
-            }
-        }
-        return resumen.toString();
+        String xmlSinFirmar = FacturaXmlWriter.toXml(ComprobanteXmlMapper.map(comprobante));
+        envioComprobanteService.firmarEnviarYConsultar(comprobante, xmlSinFirmar);
     }
 
     public static void main(String[] args) throws Exception {

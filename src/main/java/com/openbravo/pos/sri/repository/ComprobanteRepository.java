@@ -2,6 +2,7 @@ package com.openbravo.pos.sri.repository;
 
 import com.openbravo.pos.sri.dominio.Comprobante;
 import com.openbravo.pos.sri.dominio.EstadoComprobante;
+import com.openbravo.pos.sri.dominio.TipoComprobante;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -90,6 +91,40 @@ public class ComprobanteRepository {
         }
     }
 
+    /** Datos de la factura AUTORIZADA que se necesitan para construir su Nota de Credito (anulacion). */
+    public static final class FacturaParaAnular {
+        public final String id;
+        public final String xmlAutorizado;
+
+        FacturaParaAnular(String id, String xmlAutorizado) {
+            this.id = id;
+            this.xmlAutorizado = xmlAutorizado;
+        }
+    }
+
+    /**
+     * La factura (tipo_comprobante='01') AUTORIZADA identificada por su
+     * ticket_id, con el XML que devolvio el SRI ya autorizado - lo que
+     * necesita {@code AnulacionService} para construir la Nota de Credito
+     * que la anula. Vacio si el ticket no existe, no es una factura, o no
+     * esta AUTORIZADA (no tiene sentido anular algo que el SRI rechazo o
+     * que aun no se autorizo).
+     */
+    public Optional<FacturaParaAnular> buscarFacturaAutorizadaParaAnular(String ticketId) throws SQLException {
+        String sql = "SELECT id, xml_respuesta_sri FROM ecopos_sri_comprobantes " +
+            "WHERE ticket_id = ? AND tipo_comprobante = '01' AND estado = 'AUTORIZADO'";
+        try (Connection con = dataSource.getConnection();
+             PreparedStatement ps = con.prepareStatement(sql)) {
+            ps.setString(1, ticketId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new FacturaParaAnular(rs.getString("id"), rs.getString("xml_respuesta_sri")));
+            }
+        }
+    }
+
     public boolean existePorTicketId(String ticketId) throws SQLException {
         String sql = "SELECT 1 FROM ecopos_sri_comprobantes WHERE ticket_id = ?";
         try (Connection con = dataSource.getConnection();
@@ -103,42 +138,51 @@ public class ComprobanteRepository {
 
     public void insertar(Comprobante c) throws SQLException {
         String sql = "INSERT INTO ecopos_sri_comprobantes " +
-            "(id, ticket_id, secuencial, ambiente, estado, fecha_emision, intentos) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?)";
+            "(id, ticket_id, tipo_comprobante, comprobante_original_id, motivo, secuencial, ambiente, estado, fecha_emision, intentos) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection con = dataSource.getConnection();
              PreparedStatement ps = con.prepareStatement(sql)) {
             ps.setString(1, c.getId());
             ps.setString(2, c.getTicketId());
-            ps.setString(3, c.getSecuencial());
-            ps.setString(4, c.getAmbiente().name());
-            ps.setString(5, c.getEstado().name());
-            ps.setTimestamp(6, Timestamp.valueOf(c.getFechaEmision()));
-            ps.setInt(7, c.getIntentos());
+            ps.setString(3, c.getTipo().getCodigo());
+            ps.setString(4, c.getComprobanteOriginalId());
+            ps.setString(5, c.getMotivo());
+            ps.setString(6, c.getSecuencial());
+            ps.setString(7, c.getAmbiente().name());
+            ps.setString(8, c.getEstado().name());
+            ps.setTimestamp(9, Timestamp.valueOf(c.getFechaEmision()));
+            ps.setInt(10, c.getIntentos());
             ps.executeUpdate();
         }
     }
 
     /**
-     * Siguiente secuencial de 9 digitos a asignar (el mayor ya usado + 1,
-     * con ceros a la izquierda). Devuelve "000000001" si todavia no existe
-     * ningun comprobante. Asume un unico establecimiento/punto de emision
-     * por instalacion del conector (ver DatosEmisor) - si en el futuro se
-     * soportan varios, este metodo debe filtrar por ellos.
+     * Siguiente secuencial de 9 digitos a asignar para un tipo de
+     * comprobante (el mayor ya usado + 1, con ceros a la izquierda) -
+     * cada codDoc lleva su propia numeracion consecutiva (ficha tecnica,
+     * seccion 4): una factura y una nota de credito NO comparten secuencia,
+     * aunque se emitan el mismo dia. Devuelve "000000001" si todavia no
+     * existe ningun comprobante de ese tipo. Asume un unico establecimiento/
+     * punto de emision por instalacion del conector (ver DatosEmisor) - si
+     * en el futuro se soportan varios, este metodo debe filtrar tambien por
+     * ellos.
      *
      * No es seguro ante llamadas concurrentes (no hay bloqueo/transaccion);
-     * suficiente mientras el conector procese un ticket a la vez.
+     * suficiente mientras el conector procese un comprobante a la vez.
      */
-    public String siguienteSecuencial() throws SQLException {
+    public String siguienteSecuencial(TipoComprobante tipo) throws SQLException {
         String sql = "SELECT MAX(CAST(secuencial AS UNSIGNED)) FROM ecopos_sri_comprobantes " +
-            "WHERE secuencial IS NOT NULL";
+            "WHERE secuencial IS NOT NULL AND tipo_comprobante = ?";
         try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            long maximo = 0;
-            if (rs.next()) {
-                maximo = rs.getLong(1);
+             PreparedStatement ps = con.prepareStatement(sql)) {
+            ps.setString(1, tipo.getCodigo());
+            try (ResultSet rs = ps.executeQuery()) {
+                long maximo = 0;
+                if (rs.next()) {
+                    maximo = rs.getLong(1);
+                }
+                return String.format("%09d", maximo + 1);
             }
-            return String.format("%09d", maximo + 1);
         }
     }
 
@@ -184,8 +228,10 @@ public class ComprobanteRepository {
 
     /** Una fila del historial de facturacion, enriquecida con el numero de ticket de ECOPos (mas legible que el UUID interno). */
     public static final class RegistroHistorial {
+        public final String id;
         public final String ticketId;
-        public final int numeroTicket;
+        /** Null para una Nota de Credito (no corresponde a ningun TICKETS.ID real - ver 002_agregar_nota_credito.sql). */
+        public final Integer numeroTicket;
         public final LocalDateTime fechaEmision;
         public final String secuencial;
         public final String claveAcceso;
@@ -193,10 +239,16 @@ public class ComprobanteRepository {
         public final String numeroAutorizacion;
         public final String mensajeError;
         public final int intentos;
+        public final TipoComprobante tipoComprobante;
+        /** Solo para Nota de Credito: id (de esta misma tabla) de la factura que anula. */
+        public final String comprobanteOriginalId;
+        public final String motivo;
 
-        RegistroHistorial(String ticketId, int numeroTicket, LocalDateTime fechaEmision, String secuencial,
+        RegistroHistorial(String id, String ticketId, Integer numeroTicket, LocalDateTime fechaEmision, String secuencial,
                            String claveAcceso, EstadoComprobante estado, String numeroAutorizacion,
-                           String mensajeError, int intentos) {
+                           String mensajeError, int intentos, TipoComprobante tipoComprobante,
+                           String comprobanteOriginalId, String motivo) {
+            this.id = id;
             this.ticketId = ticketId;
             this.numeroTicket = numeroTicket;
             this.fechaEmision = fechaEmision;
@@ -206,6 +258,9 @@ public class ComprobanteRepository {
             this.numeroAutorizacion = numeroAutorizacion;
             this.mensajeError = mensajeError;
             this.intentos = intentos;
+            this.tipoComprobante = tipoComprobante;
+            this.comprobanteOriginalId = comprobanteOriginalId;
+            this.motivo = motivo;
         }
     }
 
@@ -267,8 +322,9 @@ public class ComprobanteRepository {
      * en tablas de ECOPos.
      */
     public List<RegistroHistorial> listarHistorial() throws SQLException {
-        String sql = "SELECT c.ticket_id, t.TICKETID, c.fecha_emision, c.secuencial, c.clave_acceso, " +
-            "c.estado, c.numero_autorizacion, c.mensaje_error, c.intentos " +
+        String sql = "SELECT c.id, c.ticket_id, t.TICKETID, c.fecha_emision, c.secuencial, c.clave_acceso, " +
+            "c.estado, c.numero_autorizacion, c.mensaje_error, c.intentos, " +
+            "c.tipo_comprobante, c.comprobante_original_id, c.motivo " +
             "FROM ecopos_sri_comprobantes c " +
             "LEFT JOIN TICKETS t ON t.ID = c.ticket_id " +
             "ORDER BY c.fecha_emision DESC";
@@ -279,15 +335,19 @@ public class ComprobanteRepository {
             while (rs.next()) {
                 Timestamp fechaEmision = rs.getTimestamp("fecha_emision");
                 historial.add(new RegistroHistorial(
+                        rs.getString("id"),
                         rs.getString("ticket_id"),
-                        rs.getInt("TICKETID"),
+                        (Integer) rs.getObject("TICKETID"),
                         fechaEmision != null ? fechaEmision.toLocalDateTime() : null,
                         rs.getString("secuencial"),
                         rs.getString("clave_acceso"),
                         EstadoComprobante.valueOf(rs.getString("estado")),
                         rs.getString("numero_autorizacion"),
                         rs.getString("mensaje_error"),
-                        rs.getInt("intentos")));
+                        rs.getInt("intentos"),
+                        TipoComprobante.porCodigo(rs.getString("tipo_comprobante")),
+                        rs.getString("comprobante_original_id"),
+                        rs.getString("motivo")));
             }
         }
         return historial;

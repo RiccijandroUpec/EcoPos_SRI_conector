@@ -115,6 +115,16 @@
             <version>3.5.3</version>
         </dependency>
 
+        <!-- Envio del XML/RIDE por correo al comprador (obligatorio si lo pide,
+             Resolucion NAC-DGERCGC12-00105) - jakarta.mail trae API + runtime
+             SMTP en un solo jar, sin depender de un JDK con javax.mail
+             incluido (removido desde Java 11). -->
+        <dependency>
+            <groupId>com.sun.mail</groupId>
+            <artifactId>jakarta.mail</artifactId>
+            <version>2.0.1</version>
+        </dependency>
+
         <!-- Logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -163,6 +173,24 @@
                                 <source>src/main/resources/xsd/factura_V2.1.0.xsd</source>
                             </sources>
                             <packageName>com.openbravo.pos.sri.xml.generado</packageName>
+                            <clearOutputDir>false</clearOutputDir>
+                        </configuration>
+                    </execution>
+                    <!-- Nota de Credito: paquete propio porque el XSD de la ficha
+                         tecnica define tipos con el MISMO nombre que factura_V2.1.0.xsd
+                         (infoTributaria, impuesto, codigo...) pero con forma distinta -
+                         generarlos en el mismo paquete chocaria (dos clases InfoTributaria
+                         incompatibles). -->
+                    <execution>
+                        <id>generar-clases-nota-credito</id>
+                        <goals>
+                            <goal>xjc</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>src/main/resources/xsd/notaCredito_V1.1.0.xsd</source>
+                            </sources>
+                            <packageName>com.openbravo.pos.sri.xml.generado.notacredito</packageName>
                             <clearOutputDir>false</clearOutputDir>
                         </configuration>
                     </execution>

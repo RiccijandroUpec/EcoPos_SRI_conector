@@ -44,6 +44,14 @@ public class Comprobante {
     private int intentos;
     private LocalDateTime fechaAutorizacion;
 
+    // --- solo para TipoComprobante.NOTA_CREDITO (anulacion de una factura) ---
+    /** id (de ecopos_sri_comprobantes) de la factura que esta Nota de Credito anula. */
+    private String comprobanteOriginalId;
+    private String motivo;
+    private String codDocModificado;
+    private String numDocModificado;
+    private LocalDateTime fechaEmisionDocSustento;
+
     public Comprobante(String ticketId, TipoComprobante tipo, Ambiente ambiente,
                         LocalDateTime fechaEmision, DatosEmisor emisor, Cliente cliente,
                         List<DetalleFactura> detalles, List<ImpuestoDetalle> totalesPorImpuesto,
@@ -114,4 +122,19 @@ public class Comprobante {
 
     public LocalDateTime getFechaAutorizacion() { return fechaAutorizacion; }
     public void setFechaAutorizacion(LocalDateTime fechaAutorizacion) { this.fechaAutorizacion = fechaAutorizacion; }
+
+    public String getComprobanteOriginalId() { return comprobanteOriginalId; }
+    public void setComprobanteOriginalId(String comprobanteOriginalId) { this.comprobanteOriginalId = comprobanteOriginalId; }
+
+    public String getMotivo() { return motivo; }
+    public void setMotivo(String motivo) { this.motivo = motivo; }
+
+    public String getCodDocModificado() { return codDocModificado; }
+    public void setCodDocModificado(String codDocModificado) { this.codDocModificado = codDocModificado; }
+
+    public String getNumDocModificado() { return numDocModificado; }
+    public void setNumDocModificado(String numDocModificado) { this.numDocModificado = numDocModificado; }
+
+    public LocalDateTime getFechaEmisionDocSustento() { return fechaEmisionDocSustento; }
+    public void setFechaEmisionDocSustento(LocalDateTime fechaEmisionDocSustento) { this.fechaEmisionDocSustento = fechaEmisionDocSustento; }
 }
