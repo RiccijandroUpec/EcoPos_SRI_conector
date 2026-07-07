@@ -69,8 +69,8 @@ las ventas registradas en ECOPos.
 | `secuencial` en `ecopos_sri_comprobantes` | ✅ Columna agregada (no existía) + `ComprobanteRepository.siguienteSecuencial()` (MAX+1, sin bloqueo — suficiente mientras el conector procese un ticket a la vez) |
 | `SoapClient` (envoltorio sobre los stubs CXF) | ✅ **Escrito y probado contra el servidor real de pruebas del SRI** (`celcer.sri.gob.ec`, no solo compilación) — ver hallazgo importante abajo |
 | Firma XAdES-BES (`XadesBesSigner`) | ✅ **Escrito y probado con una firma real** (certificado autofirmado generado con `keytool` en el test, no un mock) — 3 tests, incluye verificar que usa **RSA-SHA1** (no el SHA-256 por defecto de xades4j) tal como exige la sección 6.8/Anexo 14 de la ficha técnica. Ver notas técnicas abajo sobre el conflicto de runtime JAXB con xades4j |
-| `ConfiguracionLoader` (lee `datos-emisor.properties` → `DatosEmisor`) | ⏳ Siguiente paso |
-| Pantalla Swing de configuración | ⏳ Siguiente paso — falta decidir cómo la abre el administrador (standalone vs. botón-hook en ECOPos) |
+| `ConfiguracionLoader` (lee/escribe `datos-emisor.properties` ↔ `DatosEmisor`) | ✅ **Escrito y probado** — 4 tests con round-trip real a disco (`@TempDir`), incluyendo verificar que la clave del certificado nunca queda en texto plano en el archivo (`ClaveCifrador`, AES-GCM) |
+| Pantalla Swing de configuración (`ConfiguracionFrame`) | ✅ Escrita y compila; carga/guarda contra `ConfiguracionLoader`. **No se pudo verificar visualmente en este entorno** (el sandbox de ejecución no comparte sesión de escritorio interactiva con este proceso — ver nota abajo). Corrida tú mismo antes de confiar en el layout. Falta decidir cómo la abre el administrador (standalone vs. botón-hook en ECOPos) |
 | Clase `Main`/orquestador (une todo en un proceso que corra continuamente) | ⏳ Siguiente paso — **no existe todavía en absoluto** |
 
 ## ⚠️ Hallazgo importante: el WSDL oficial no coincide con el servidor real
@@ -103,13 +103,27 @@ re-aplicar este mismo ajuste antes de regenerar los stubs.
 
 1. Ejecuta `src/main/resources/sql/001_create_ecopos_sri_comprobantes.sql`
    (actualizado, incluye la columna `secuencial`) contra la base `ecopos`.
-2. `ConfiguracionLoader` + pantalla Swing para que el administrador cargue
-   `DatosEmisor` (RUC, razón social, establecimiento, certificado `.p12`)
-   sin editar un `.properties` a mano.
+2. **Corre `ConfiguracionFrame` tú mismo y confirma que el layout se ve bien**
+   (no se pudo verificar visualmente en esta sesión, ver nota abajo).
 3. La clase `Main`/orquestador que una `VigilantePendientes` +
    `TicketReader` + `TicketComprobanteMapper` + `ComprobanteXmlMapper` +
    `XadesBesSigner` + `SoapClient` + `ComprobanteRepository` en un solo
-   proceso.
+   proceso — esa misma clase es donde se decide cómo se lanza
+   `ConfiguracionFrame` (standalone vs. botón-hook en ECOPos).
+
+## Nota: verificación visual de `ConfiguracionFrame` no realizada
+
+Se intentó lanzar la ventana y capturar una captura de pantalla para
+verificar el layout (como se hace normalmente con cambios de UI), pero el
+entorno de ejecución de esta sesión no comparte la sesión de escritorio
+interactiva con el proceso Java: `GraphicsEnvironment.isHeadless()` da
+`false` y la ventana obtiene bounds correctos, pero una captura con
+`Robot` (desde el mismo proceso) devolvió contenido de la pantalla real
+del usuario, no de la ventana. Se verificó que compila, que la carga/guarda
+contra `ConfiguracionLoader` es correcta, y que no hay excepciones al
+construirse — pero el layout visual (alineación, tamaños, textos cortados)
+no está confirmado. Corre `com.openbravo.pos.sri.ui.ConfiguracionFrame`
+localmente antes de darlo por bueno.
 
 ## Notas técnicas de esta iteración (2026-07-06)
 
