@@ -1,8 +1,11 @@
 package com.openbravo.pos.sri;
 
 import com.openbravo.pos.sri.config.ConexionLoader;
+import com.openbravo.pos.sri.config.ConfiguracionCorreoLoader;
 import com.openbravo.pos.sri.config.ConfiguracionLoader;
+import com.openbravo.pos.sri.correo.NotificadorCorreo;
 import com.openbravo.pos.sri.dominio.Comprobante;
+import com.openbravo.pos.sri.dominio.ConfiguracionCorreo;
 import com.openbravo.pos.sri.dominio.DatosEmisor;
 import com.openbravo.pos.sri.dominio.EstadoComprobante;
 import com.openbravo.pos.sri.dominio.TipoComprobante;
@@ -11,6 +14,7 @@ import com.openbravo.pos.sri.firma.XadesBesSigner;
 import com.openbravo.pos.sri.repository.ComprobanteRepository;
 import com.openbravo.pos.sri.repository.TicketCrudo;
 import com.openbravo.pos.sri.repository.TicketReader;
+import com.openbravo.pos.sri.ride.RideGenerator;
 import com.openbravo.pos.sri.scheduler.VigilantePendientes;
 import com.openbravo.pos.sri.soap.SoapClient;
 import com.openbravo.pos.sri.xml.ComprobanteXmlMapper;
@@ -20,6 +24,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
@@ -49,6 +55,7 @@ public final class ConectorPrincipal {
 
     private static final Path CONFIG_EMISOR_POR_DEFECTO = Path.of("config/datos-emisor.properties");
     private static final Path CONFIG_CONEXION_POR_DEFECTO = Path.of("config/conexion.properties");
+    private static final Path CONFIG_CORREO_POR_DEFECTO = Path.of("config/correo.properties");
     private static final Path CARPETA_PENDIENTES_POR_DEFECTO = Path.of("sri-conector/pendientes");
 
     private static final int MAX_INTENTOS_REINTENTO = 5;
@@ -161,6 +168,46 @@ public final class ConectorPrincipal {
 
         String xmlSinFirmar = FacturaXmlWriter.toXml(ComprobanteXmlMapper.map(comprobante));
         envioComprobanteService.firmarEnviarYConsultar(comprobante, xmlSinFirmar);
+
+        intentarEnvioAutomaticoPorCorreo(comprobante);
+    }
+
+    /**
+     * Si el comprobante quedo AUTORIZADO y el cliente tiene un correo (el
+     * que el cajero ingreso al activar "Facturar SRI: SI" en la pantalla de
+     * venta - ver {@code script.SriInvoiceOn.txt}/{@code TicketReader}), le
+     * envia el XML+RIDE automaticamente. Nunca lanza - un problema de correo
+     * (SMTP no configurado, servidor caido, etc.) no debe afectar el
+     * resultado de la facturacion en si, que ya quedo resuelto en el SRI. Si
+     * no hay correo o no hay {@code config/correo.properties}, se omite en
+     * silencio (queda el envio manual desde el Historial como respaldo).
+     */
+    private void intentarEnvioAutomaticoPorCorreo(Comprobante comprobante) {
+        if (comprobante.getEstado() != EstadoComprobante.AUTORIZADO) {
+            return;
+        }
+        String destinatario = comprobante.getCliente().getEmail();
+        if (destinatario == null || destinatario.isBlank()) {
+            return;
+        }
+        if (!Files.exists(CONFIG_CORREO_POR_DEFECTO)) {
+            LOG.info("Comprobante {} autorizado con correo de cliente ({}), pero no existe {} - omitiendo envio automatico",
+                    comprobante.getId(), destinatario, CONFIG_CORREO_POR_DEFECTO);
+            return;
+        }
+        try {
+            byte[] pdf = RideGenerator.generar(comprobante.getXmlRespuestaSri(), comprobante.getFechaAutorizacion());
+            ConfiguracionCorreo configuracionCorreo = ConfiguracionCorreoLoader.cargar(CONFIG_CORREO_POR_DEFECTO);
+            new NotificadorCorreo(configuracionCorreo).enviarComprobante(destinatario,
+                    "Factura electrónica - " + comprobante.getSecuencial(),
+                    "Adjunto el comprobante electrónico autorizado por el SRI (XML y representación impresa en PDF).",
+                    "factura-" + comprobante.getSecuencial() + ".xml",
+                    comprobante.getXmlRespuestaSri().getBytes(StandardCharsets.UTF_8),
+                    "factura-" + comprobante.getSecuencial() + ".pdf", pdf);
+            LOG.info("Correo enviado automaticamente a {} para el comprobante {}", destinatario, comprobante.getId());
+        } catch (Exception e) {
+            LOG.warn("No se pudo enviar automaticamente el correo del comprobante {} a {}", comprobante.getId(), destinatario, e);
+        }
     }
 
     public static void main(String[] args) throws Exception {

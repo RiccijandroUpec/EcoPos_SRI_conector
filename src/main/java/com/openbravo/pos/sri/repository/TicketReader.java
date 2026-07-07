@@ -1,5 +1,6 @@
 package com.openbravo.pos.sri.repository;
 
+import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -9,7 +10,10 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Properties;
 import javax.sql.DataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Lee un ticket ya cerrado directamente de las tablas de ECOPos
@@ -18,6 +22,10 @@ import javax.sql.DataSource;
  * modifica el core de ECOPos ni sus datos.
  */
 public class TicketReader {
+
+    private static final Logger LOG = LoggerFactory.getLogger(TicketReader.class);
+    /** Propiedad por-ticket que script.SriInvoiceOn.txt guarda (mismo mecanismo que "sri.invoice") con el correo que el cajero ingreso para este ticket. */
+    private static final String PROPIEDAD_EMAIL = "sri.email";
 
     private final DataSource dataSource;
 
@@ -39,7 +47,7 @@ public class TicketReader {
 
     private TicketCrudo leerCabecera(Connection con, String ticketId) throws SQLException {
         String sql =
-            "SELECT t.TICKETTYPE, t.TICKETID, r.DATENEW, t.CUSTOMER, " +
+            "SELECT t.TICKETTYPE, t.TICKETID, r.DATENEW, r.ATTRIBUTES, t.CUSTOMER, " +
             "       c.TAXID AS CLIENTE_TAXID, c.NAME AS CLIENTE_NOMBRE, " +
             "       c.ADDRESS AS CLIENTE_DIRECCION, c.EMAIL AS CLIENTE_EMAIL, c.PHONE AS CLIENTE_TELEFONO " +
             "FROM TICKETS t " +
@@ -64,8 +72,36 @@ public class TicketReader {
                 t.clienteDireccion = rs.getString("CLIENTE_DIRECCION");
                 t.clienteEmail = rs.getString("CLIENTE_EMAIL");
                 t.clienteTelefono = rs.getString("CLIENTE_TELEFONO");
+
+                // El correo que el cajero escribio para ESTE ticket (boton "Facturar SRI: SI",
+                // script.SriInvoiceOn.txt) manda sobre el del perfil de cliente guardado -
+                // es el dato mas reciente/especifico para esta venta en particular.
+                String emailDelTicket = leerPropiedadEmail(rs.getBytes("ATTRIBUTES"), ticketId);
+                if (emailDelTicket != null && !emailDelTicket.isBlank()) {
+                    t.clienteEmail = emailDelTicket;
+                }
                 return t;
             }
+        }
+    }
+
+    /**
+     * RECEIPTS.ATTRIBUTES guarda las propiedades por-ticket de ECOPos
+     * (TicketInfo.attributes) serializadas con {@code Properties.storeToXML}
+     * (ver DataLogicSales.java) - se leen de vuelta igual, sin depender de
+     * ninguna clase de ECOPos.
+     */
+    private static String leerPropiedadEmail(byte[] atributos, String ticketId) {
+        if (atributos == null) {
+            return null;
+        }
+        try {
+            Properties propiedades = new Properties();
+            propiedades.loadFromXML(new ByteArrayInputStream(atributos));
+            return propiedades.getProperty(PROPIEDAD_EMAIL);
+        } catch (Exception e) {
+            LOG.warn("No se pudieron leer los atributos del ticket {} (RECEIPTS.ATTRIBUTES) - se ignora el correo manual", ticketId, e);
+            return null;
         }
     }
 
