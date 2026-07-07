@@ -13,9 +13,11 @@ las ventas registradas en ECOPos.
 | Generación de código | JAXB (`javax.xml.bind:jaxb-api` + `org.glassfish.jaxb:jaxb-runtime`) | 2.3.1 / 2.3.9 | Genera las 38 clases del comprobante (`Factura`, `InfoTributaria`, `Detalle`...) a partir de `factura_V2.1.0.xsd` — nunca se escriben a mano |
 | | `org.codehaus.mojo:jaxb2-maven-plugin` (goal `xjc`) | 2.5.0 | Ejecuta la generación JAXB en cada build (`mvn generate-sources`) |
 | | Apache CXF (`cxf-rt-frontend-jaxws`, `cxf-rt-transports-http`, `cxf-codegen-plugin`) | 3.6.4 | Genera los stubs Java del cliente SOAP a partir del WSDL real del SRI (`wsdl2java`), y provee el runtime JAX-WS para invocarlos |
-| Firma electrónica | xades4j (`com.googlecode.xades4j`) | 2.4.0 | Firma XAdES-BES sobre el XML del comprobante (aún por integrar) |
+| Firma electrónica | xades4j (`com.googlecode.xades4j`) | 2.4.0 | Firma XAdES-BES sobre el XML del comprobante |
 | Base de datos | MySQL Connector/J (`com.mysql:mysql-connector-j`) | 8.0.33 | Lectura de `TICKETS`/`RECEIPTS`/`TICKETLINES` de ECOPos y CRUD de `ecopos_sri_comprobantes` |
 | Logging | SLF4J + Logback | 2.0.13 / 1.5.6 | Logging del conector (independiente del logging de ECOPos) |
+| RIDE (PDF) | Apache PDFBox + ZXing | 2.0.31 / 3.5.3 | Genera la representación impresa (RIDE) de facturas y notas de crédito, con código de barras GS1-128 de la clave de acceso. Ambas Apache-2.0 (se evitó iText 7 a propósito por su licencia AGPL) |
+| Correo | `com.sun.mail:jakarta.mail` | 2.0.1 | Envío del XML+RIDE al comprador (manual desde el Historial, o automático al quedar AUTORIZADO) |
 | Tests | JUnit Jupiter | 5.10.2 | Tests unitarios (`ClaveAccesoGeneratorTest`, `ComprobanteXmlMapperTest`) |
 | Empaquetado | `maven-shade-plugin` | 3.5.3 | Genera un jar único con todas las dependencias, para poder soltarlo en un classpath sin gestionar ~15 jars sueltos |
 
@@ -45,6 +47,14 @@ las ventas registradas en ECOPos.
   Por cada flag nuevo, lee el ticket completo de la base de datos por su
   cuenta (no depende de clases de ECOPos) y arranca el flujo: generar XML →
   firmar XAdES-BES → enviar a Recepción → consultar Autorización.
+- **Dos mecanismos de persistencia distintos, no confundir uno con otro**:
+  (a) `sri-conector/facturacion-global.properties` (clave `activo`) es el
+  interruptor GLOBAL de si se factura o no - lo escriben los botones
+  "SRI: SI/NO" de la pantalla de venta, lo lee `Ticket.Close.xml`, aplica a
+  todas las ventas por igual; (b) el correo del cliente para una venta en
+  particular sí es por-ticket (propiedad `sri.email` en
+  `RECEIPTS.ATTRIBUTES`, formato `Properties.storeToXML` de ECOPos), porque
+  es un dato de esa venta específica, no una configuración general.
 - El estado de cada comprobante vive en `ecopos_sri_comprobantes` (tabla
   nueva, sin FK real hacia las tablas de ECOPos — ver el `.sql` para el
   razonamiento). Los reintentos ante fallas de red/SRI son responsabilidad
@@ -56,13 +66,13 @@ las ventas registradas en ECOPos.
 |---|---|
 | Estructura Maven + `pom.xml` | ✅ Listo, `mvn clean test` verificado en verde |
 | Hook con ECOPos (script `Ticket.Close` + carpeta de flags) | ✅ Listo y probado (arranque de ECOPos verificado, sintaxis BeanShell validada con intérprete real) |
-| Tabla `ecopos_sri_comprobantes` | ✅ Script SQL listo, falta ejecutarlo contra tu MySQL |
-| `VigilantePendientes` (detección de ventas cerradas) | ✅ Escrito, compila |
-| Clases de dominio (`Comprobante`, `DatosEmisor`, `Cliente`, `DetalleFactura`, `ImpuestoDetalle`, `Pago`, enums) | ✅ Escritas, compilan |
-| `ClaveAccesoGenerator` (clave de 49 dígitos, módulo 11) | ✅ Escrito + 5 tests unitarios en verde — **falta validar el dígito verificador contra un ejemplo real del SRI** (ver comentario en el test) |
-| `TicketReader` / `ComprobanteRepository` (lectura ECOPos + CRUD tabla propia) | ✅ Escritos, compilan (sin probar aún contra MySQL real) |
+| Tabla `ecopos_sri_comprobantes` | ✅ Creada y en uso real contra el MySQL de la instalación (más la migración `002_agregar_nota_credito.sql` para Nota de Crédito, también ya ejecutada) |
+| `VigilantePendientes` (detección de ventas cerradas) | ✅ Escrito, probado con tickets reales (dispara `ConectorPrincipal.procesarTicket` de verdad al cerrar una venta) |
+| Clases de dominio (`Comprobante`, `DatosEmisor`, `Cliente`, `DetalleFactura`, `ImpuestoDetalle`, `Pago`, enums) | ✅ Escritas, compilan, usadas en los flujos reales de factura y nota de crédito |
+| `ClaveAccesoGenerator` (clave de 49 dígitos, módulo 11) | ✅ Escrito + 5 tests unitarios en verde — el dígito verificador quedó implícitamente validado: el SRI real aceptó (RECIBIDA) varias claves generadas por este código, tanto de facturas como de la nota de crédito |
+| `TicketReader` / `ComprobanteRepository` (lectura ECOPos + CRUD tabla propia) | ✅ Escritos y **probados extensamente contra MySQL real** (no solo compilación) — incluye la lectura de `RECEIPTS.ATTRIBUTES` para el correo del cliente |
 | WSDL de Recepción/Autorización | ✅ **Descargados el 2026-07-06 desde `celcer.sri.gob.ec` (ambiente de pruebas), confirmados oficiales por la ficha técnica v2.32 (sección 7.2.1)**. `cxf-codegen-plugin` genera los stubs reales, `mvn clean test` en verde |
-| Cliente SOAP (stubs generados: `RecepcionComprobantesOffline`, `AutorizacionComprobantesOffline`) | ✅ Clases generadas y compilando (`target/generated-sources/cxf/...`). Falta escribir el wrapper `SoapClient` que las invoque |
+| Cliente SOAP (stubs generados: `RecepcionComprobantesOffline`, `AutorizacionComprobantesOffline`) | ✅ Clases generadas y compilando (`target/generated-sources/cxf/...`). El wrapper `SoapClient` que las invoca ya está escrito y probado — ver fila siguiente |
 | XSD del comprobante (factura v2.1.0) | ✅ **`factura_V2.1.0.xsd` real integrado** (ver `src/main/resources/xsd-README.md` para procedencia). `jaxb2-maven-plugin` genera 38 clases (`Factura`, `InfoTributaria`, `Detalle`, `Reembolsos`, etc.) en cada build, `mvn clean test` en verde |
 | Mapeo `Comprobante` (dominio) → clases JAXB → XML (`com.openbravo.pos.sri.xml`) | ✅ **`ComprobanteXmlMapper` + `FacturaXmlWriter` escritos y probados** — 6 tests, incluyendo generación de XML real verificado campo por campo contra la ficha técnica (`infoTributaria`, `infoFactura`, `detalles`, impuestos con `codigoPorcentaje` resuelto vía `CodigoPorcentajeIva`, montos siempre a 2 decimales) |
 | Mapeo `TicketCrudo` → `Comprobante` (`TicketComprobanteMapper`) | ✅ **Escrito y probado** — 5 tests, más una prueba manual de la cadena completa `TicketCrudo → Comprobante → XML` con dos líneas de distinta tarifa (15% y exenta), agrupadas correctamente en dos `<totalImpuesto>`. Resuelve tipo de identificación del cliente por longitud (`TipoIdentificacionResolver`) y forma de pago por heurística de nombre (`FormaPagoResolver`) — **ambas heurísticas deben revisarse contra los datos reales de cada instalación antes de producción** |
@@ -70,10 +80,10 @@ las ventas registradas en ECOPos.
 | `SoapClient` (envoltorio sobre los stubs CXF) | ✅ **Escrito y probado contra el servidor real de pruebas del SRI** (`celcer.sri.gob.ec`, no solo compilación) — ver hallazgo importante abajo |
 | Firma XAdES-BES (`XadesBesSigner`) | ✅ **Escrito y probado con una firma real** (certificado autofirmado generado con `keytool` en el test, no un mock) — 3 tests, incluye verificar que usa **RSA-SHA1** (no el SHA-256 por defecto de xades4j) tal como exige la sección 6.8/Anexo 14 de la ficha técnica. Ver notas técnicas abajo sobre el conflicto de runtime JAXB con xades4j |
 | `ConfiguracionLoader` (lee/escribe `datos-emisor.properties` ↔ `DatosEmisor`) | ✅ **Escrito y probado** — 4 tests con round-trip real a disco (`@TempDir`), incluyendo verificar que la clave del certificado nunca queda en texto plano en el archivo (`ClaveCifrador`, AES-GCM) |
-| Pantalla Swing de configuración (`ConfiguracionFrame`) | ✅ Escrita y compila; carga/guarda contra `ConfiguracionLoader`. **No se pudo verificar visualmente en este entorno** (el sandbox de ejecución no comparte sesión de escritorio interactiva con este proceso — ver nota abajo). Corrida tú mismo antes de confiar en el layout. Falta decidir cómo la abre el administrador (standalone vs. botón-hook en ECOPos) |
+| Pantalla Swing de configuración (`ConfiguracionFrame`) | ✅ Escrita y compila; carga/guarda contra `ConfiguracionLoader` — se usó para guardar los datos reales del emisor que llevaron al AUTORIZADO real de abajo, así que su lógica sí está probada. **No se pudo verificar visualmente en este entorno** (ver nota al final del documento). Se abre desde EcoPos vía botón (Administración > Sistema), ver fila siguiente |
 | Clase orquestadora `ConectorPrincipal` (une todo en un proceso que corra continuamente) | ✅ **Escrita y probada de punta a punta contra servicios reales, con resultado AUTORIZADO** (MySQL real + certificado real acreditado + servidor real de pruebas del SRI, no mocks) — ver hallazgo abajo con los 4 bugs reales encontrados y corregidos en el camino |
 | Botón en EcoPos para abrir `ConfiguracionFrame` (Administración > Sistema) | ✅ **Escrito y probado** — hook data-only (`SriConnectorConfig.bs` + `Menu.Root`/`Role.Administrator` en el repo de EcoPos), lanza el jar del conector como proceso externo. Confirmado con un lanzamiento real (título de ventana verificado vía la tabla de procesos del SO) |
-| Botones "Facturar SRI: SI/NO" en la pantalla de venta de EcoPos | ✅ **Escritos y probados con un ticket real** — hook data-only (`script.SriInvoiceOn/Off.txt` + `Ticket.Buttons`/3 roles en el repo de EcoPos), marcan un atributo por ticket que `Ticket.Close` lee para decidir si factura. Por defecto NO factura si el cajero no toca el control; el ticket siempre se imprime igual |
+| Botones "Facturar SRI: SI/NO" en la pantalla de venta de EcoPos | ✅ **Rediseñados como interruptor GLOBAL persistente, con íconos** — ya no son botones de solo texto ni marcan un atributo por-ticket (eso reseteaba a "NO" en cada venta nueva). Ahora escriben en un archivo compartido (`sri-conector/facturacion-global.properties`, clave `activo`) que `Ticket.Close.xml` lee directo: una vez en SI, aplica a **todas** las ventas hasta que alguien presione NO (elegido así explícitamente por el usuario, sin excepción por ticket). Íconos propios (`img.sriinvoiceon`/`img.sriinvoiceoff`, check verde / X gris, ver "Hallazgo: límite del framework de botones" abajo) insertados como filas nuevas en `RESOURCES`. El botón SI sigue ofreciendo capturar el correo del cliente para esa venta puntual si su perfil no tiene uno guardado. El ticket siempre se imprime igual, sin importar este ajuste. **No verificado visualmente en la pantalla de venta real** (mismo límite de sandbox que `ConfiguracionFrame`, ver nota abajo) |
 | Historial de facturación (`HistorialFrame`) | ✅ **Escrito y probado** — lista todo `ecopos_sri_comprobantes` (facturas y notas de crédito), colorea por estado, y marca en naranja los comprobantes ENVIADO/ERROR con más de 24h sin resolverse (aviso operativo, no una cita textual de un plazo legal del SRI) |
 | RIDE en PDF (`RideGenerator` / `RideNotaCreditoGenerator`) | ✅ **Escrito y verificado** (render-a-imagen con `PDFRenderer`, no solo extracción de texto) contra un layout de referencia real de otro sistema — cubre fecha/hora de autorización, subtotales por tarifa/tipo de impuesto (con IVA/ICE/IRBPNR etiquetados por su código real), código auxiliar y detalle adicional por línea, subsidio, e Información Adicional |
 | **Nota de Crédito (anulación de facturas)** (`AnulacionService`, `NotaCreditoXmlMapper`, `AnulacionFrame`) | ✅ **Escrita y probada de punta a punta contra el SRI real** (firma, Recepción, Autorización) — el SRI la **rechazó** con `69: ERROR EN LA IDENTIFICACION DEL RECEPTOR` al anular una factura emitida a "CONSUMIDOR FINAL" (ver hallazgo abajo). El flujo técnico (XML válido, firma, envío, consulta) funciona; falta confirmar con un comprador identificado si el rechazo es por eso |
@@ -194,41 +204,119 @@ o bloquear el intento cuando la factura original sea a consumidor final,
 en vez de dejar que el usuario descubra el rechazo despues de una llamada
 real al SRI.
 
+## ⚠️ Hallazgo real: el framework de botones de ECOPos no soporta color dinámico
+
+Al rediseñar los botones "Facturar SRI: SI/NO" (pedido del usuario: menos
+espacio, un color cuando está activado y otro cuando no, íconos menos
+pixelados), se investigó `JPanelButtons`/`JButtonFunc` (código de ECOPos,
+solo lectura) para ver si un único botón podía cambiar de color en vivo
+según el estado actual. **No se puede sin modificar un `.java` de
+ECOPos**: los botones de la barra (`JButtonFunc extends JButton`) se crean
+**una sola vez**, al abrir la pantalla de venta, a partir de la
+configuración XML estática (`Ticket.Buttons.xml`) - no hay ningún
+mecanismo de repintado ligado al estado del ticket o a un archivo externo.
+Cambiar esto violaría la regla de "solo extensiones de datos" que se ha
+mantenido en todo este proyecto (ver sección de arquitectura arriba).
+
+**Solución adoptada dentro del límite**: dos botones separados con ícono
+de color fijo (verde=activar, gris=desactivar) en vez de un único
+interruptor dinámico, más un aviso emergente grande cada vez que cambia el
+estado (para que quede claro que el cambio es global, no solo del ticket
+actual).
+
+**Lección de diseño de íconos para esta app**: el primer boceto (documento
+con líneas + un círculo con check superpuesto, dibujado a 256px) se veía
+bien en grande pero quedaba borroso/ilegible una vez reducido a 24×24 (el
+tamaño real que usa `ThumbNailBuilder` en la barra de botones - interpolación
+bilinear). Se confirmó renderizando una previsualización real a 24×24 con
+la misma interpolación que usa la app, no solo mirando la fuente en alta
+resolución. El diseño final (fondo con degradado + un solo trazo blanco
+grueso, check o X, sin más elementos) sí se lee bien a ese tamaño. **Para
+cualquier ícono futuro de ~24px en esta app: previsualizar al tamaño real
+antes de dar por buena la fuente en alta resolución.**
+
+Las imágenes de ECOPos también son **DB-only** (`DataLogicSystem.getResource`,
+sin fallback a classpath, igual que los scripts `Ticket.Buttons`/`Ticket.Close`) -
+se insertaron como filas nuevas en `RESOURCES` (`img.sriinvoiceon`/`off`,
+`RESTYPE=1`), verificado leyendo los bytes de vuelta desde la base y
+comprobando que el tamaño coincide exactamente con el archivo fuente
+(5670/5274 bytes). Los PNG fuente quedan en
+`src/main/resources/iconos-ecopos/` de este repo solo como respaldo/para
+regenerarlos - no se cargan desde ahí en tiempo de ejecución.
+
 ## Siguiente paso inmediato
 
-1. **Confirmar el hallazgo de arriba** (Nota de Crédito vs. consumidor
-   final) con una factura real a un comprador identificado.
-2. **Probar el ambiente de Producción** una vez que el negocio esté listo
+**Pendientes que requieren confirmación/prueba humana (nada de esto se
+puede resolver solo con más código):**
+
+1. **Confirmar el hallazgo de Nota de Crédito vs. consumidor final** con
+   una factura real a un comprador identificado (cédula/RUC, no
+   "consumidor final") - ver hallazgo arriba. Mientras no se confirme, no
+   confíes en la anulación para facturas emitidas a consumidor final.
+2. **Verificar visualmente la pantalla de venta de EcoPos** (tamaño/color
+   de los botones "SRI: SI/NO" rediseñados) y `ConfiguracionFrame` (layout
+   general) - ninguna de las dos se pudo confirmar visualmente en este
+   entorno (ver nota abajo). Ambas compilan y su lógica está probada, pero
+   el aspecto real en pantalla no.
+3. **Probar el envío por correo contra un servidor SMTP real** (manual
+   desde el Historial, y automático al quedar AUTORIZADO) - solo se
+   verificó que compila y que arma el mensaje correctamente,
+   `NotificadorCorreo` nunca se conectó a un servidor SMTP de verdad.
+4. **Probar el ambiente de Producción** una vez que el negocio esté listo
    para emitir facturas reales (hasta ahora todo se probó en `PRUEBAS` a
-   propósito).
-3. **Corre `ConfiguracionFrame` tú mismo y confirma que el layout se ve bien**
-   (no se pudo verificar visualmente en esta sesión, ver nota abajo) -
-   aunque ya se confirmó indirectamente que funciona: se usó para guardar
-   los datos reales del emisor que llevaron a la prueba de arriba.
-4. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
+   propósito, incluida la Nota de Crédito).
+5. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
    en la instalación real donde corra el conector — `ConectorPrincipal`
    usa `localhost`/`3306`/`ecopos`/`root`/`` como valores por defecto si el
    archivo no existe, pensado para XAMPP local, no para producción.
-5. Dejar `ConectorPrincipal` corriendo de forma continua junto a EcoPos
+6. Dejar `ConectorPrincipal` corriendo de forma continua junto a EcoPos
    (tarea programada de Windows, servicio, o similar) - hasta ahora solo se
    ha probado lanzándolo a mano para cada ticket.
-6. **Probar el envío por correo contra un servidor SMTP real** (solo se
-   verificó que compila, `NotificadorCorreo` no se ha probado con
-   credenciales SMTP reales todavía).
 
-## Nota: verificación visual de `ConfiguracionFrame` no realizada
+**Limitaciones conocidas, no bloqueantes pero buenas de tener presentes:**
 
-Se intentó lanzar la ventana y capturar una captura de pantalla para
-verificar el layout (como se hace normalmente con cambios de UI), pero el
-entorno de ejecución de esta sesión no comparte la sesión de escritorio
-interactiva con el proceso Java: `GraphicsEnvironment.isHeadless()` da
-`false` y la ventana obtiene bounds correctos, pero una captura con
-`Robot` (desde el mismo proceso) devolvió contenido de la pantalla real
-del usuario, no de la ventana. Se verificó que compila, que la carga/guarda
-contra `ConfiguracionLoader` es correcta, y que no hay excepciones al
-construirse — pero el layout visual (alineación, tamaños, textos cortados)
-no está confirmado. Corre `com.openbravo.pos.sri.ui.ConfiguracionFrame`
-localmente antes de darlo por bueno.
+- **Sin tests automatizados para nada de lo agregado después del hito de
+  factura AUTORIZADO**: el historial, el RIDE, la Nota de Crédito, el
+  correo y el rediseño de botones se verificaron con pruebas manuales
+  puntuales contra servicios/base de datos reales (documentadas en este
+  README), no con tests JUnit nuevos - la suite automatizada sigue en 24
+  tests, sin cambios desde antes de todo esto. Si se refactoriza algo de
+  esa superficie más nueva, no hay red de seguridad automatizada todavía.
+- **Un solo establecimiento/punto de emisión por instalación**:
+  `ComprobanteRepository.siguienteSecuencial()` calcula un único
+  consecutivo por tipo de comprobante, sin filtrar por
+  estab/ptoEmi. Si el negocio abre una segunda sucursal o caja con su
+  propio punto de emisión, esto hay que revisarlo antes (el SRI exige un
+  consecutivo independiente por cada combinación estab-ptoEmi-codDoc).
+- **Nota de Crédito solo cubre anulación TOTAL**: copia el detalle y el
+  valor completo de la factura original tal como el SRI la autorizó, no
+  permite acreditar solo algunas líneas o un monto parcial.
+- **`TipoIdentificacionResolver`/`FormaPagoResolver`** (heurísticas para
+  adivinar tipo de identificación por longitud y forma de pago por texto
+  libre de ECOPos) siguen sin validarse contra datos reales de clientes/
+  pagos de esta instalación específica - revisar antes de confiar en ellas
+  a ciegas en producción.
+- **Fuera de alcance actual** (el usuario los descartó explícitamente al
+  construir la Nota de Crédito): Nota de Débito, Guía de Remisión,
+  Comprobante de Retención, Liquidación de Compra. Se puede agregar
+  soporte si el negocio los llega a necesitar - la arquitectura (XSD propio
+  por tipo, `EnvioComprobanteService`/`FacturaXmlReader` compartidos) ya
+  está pensada para que sea un mapeo nuevo, no un rediseño.
+
+## Nota: cosas que no se pudieron verificar visualmente en este entorno
+
+Tanto `ConfiguracionFrame` como los botones rediseñados de la pantalla de
+venta de EcoPos (`Ticket.Buttons.xml`) tienen su lógica probada (compilan,
+cargan/guardan correctamente, la imagen se lee bien desde la base) pero
+**su aspecto visual real nunca se confirmó con una captura de pantalla**.
+Se intentó lanzar `ConfiguracionFrame` y capturar la ventana con `Robot`,
+pero el entorno de ejecución de esta sesión no comparte la sesión de
+escritorio interactiva con el proceso Java: `GraphicsEnvironment.isHeadless()`
+da `false` y la ventana obtiene bounds correctos, pero la captura devolvió
+el contenido de la pantalla real del usuario, no el de la ventana. Corre
+`com.openbravo.pos.sri.ui.ConfiguracionFrame` localmente, y abre la
+pantalla de venta de EcoPos, antes de dar por bueno el aspecto visual de
+cualquiera de las dos.
 
 ## Notas técnicas de esta iteración (2026-07-06)
 
