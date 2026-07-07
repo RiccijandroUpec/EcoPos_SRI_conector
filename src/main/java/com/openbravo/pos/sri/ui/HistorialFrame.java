@@ -193,7 +193,7 @@ public class HistorialFrame extends JFrame {
                 JOptionPane.showMessageDialog(this, "Este comprobante todavía no tiene ningún XML generado.", "Sin XML", JOptionPane.INFORMATION_MESSAGE);
                 return;
             }
-            byte[] pdf = RideGenerator.generar(xml.get().masReciente());
+            byte[] pdf = RideGenerator.generar(xml.get().masReciente(), xml.get().fechaAutorizacion);
             File temporal = File.createTempFile("ride-" + ticketId, ".pdf");
             temporal.deleteOnExit();
             Files.write(temporal.toPath(), pdf);

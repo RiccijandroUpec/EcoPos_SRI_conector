@@ -214,11 +214,14 @@ public class ComprobanteRepository {
         public final String xmlGenerado;
         public final String xmlFirmado;
         public final String xmlRespuestaSri;
+        /** Fecha/hora en que el SRI autorizo (columna propia, no viene en el XML del comprobante) - la necesita el RIDE. */
+        public final LocalDateTime fechaAutorizacion;
 
-        XmlComprobante(String xmlGenerado, String xmlFirmado, String xmlRespuestaSri) {
+        XmlComprobante(String xmlGenerado, String xmlFirmado, String xmlRespuestaSri, LocalDateTime fechaAutorizacion) {
             this.xmlGenerado = xmlGenerado;
             this.xmlFirmado = xmlFirmado;
             this.xmlRespuestaSri = xmlRespuestaSri;
+            this.fechaAutorizacion = fechaAutorizacion;
         }
 
         /** El mas "final" disponible: la respuesta autorizada del SRI si existe, si no el firmado, si no el generado sin firmar. */
@@ -238,7 +241,7 @@ public class ComprobanteRepository {
      * para no cargar contenido pesado innecesariamente al mostrar la lista).
      */
     public Optional<XmlComprobante> obtenerXml(String ticketId) throws SQLException {
-        String sql = "SELECT xml_generado, xml_firmado, xml_respuesta_sri " +
+        String sql = "SELECT xml_generado, xml_firmado, xml_respuesta_sri, fecha_autorizacion " +
             "FROM ecopos_sri_comprobantes WHERE ticket_id = ?";
         try (Connection con = dataSource.getConnection();
              PreparedStatement ps = con.prepareStatement(sql)) {
@@ -247,10 +250,12 @@ public class ComprobanteRepository {
                 if (!rs.next()) {
                     return Optional.empty();
                 }
+                Timestamp fechaAutorizacion = rs.getTimestamp("fecha_autorizacion");
                 return Optional.of(new XmlComprobante(
                         rs.getString("xml_generado"),
                         rs.getString("xml_firmado"),
-                        rs.getString("xml_respuesta_sri")));
+                        rs.getString("xml_respuesta_sri"),
+                        fechaAutorizacion != null ? fechaAutorizacion.toLocalDateTime() : null));
             }
         }
     }

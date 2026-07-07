@@ -22,6 +22,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 /**
  * Genera la Representacion Impresa de Documento Electronico (RIDE) en PDF a
@@ -46,11 +48,35 @@ public final class RideGenerator {
 
     private static final float MARGEN = 40f;
     private static final float ANCHO_PAGINA = PDRectangle.A4.getWidth();
+    private static final DateTimeFormatter FORMATO_FECHA_AUTORIZACION = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");
+
+    /** codigo (tabla 19 del SRI) -> nombre del impuesto, para no etiquetar ICE/IRBPNR como "IVA". */
+    private static String nombreImpuesto(String codigo) {
+        if ("2".equals(codigo)) {
+            return "IVA";
+        } else if ("3".equals(codigo)) {
+            return "ICE";
+        } else if ("5".equals(codigo)) {
+            return "IRBPNR";
+        }
+        return "Impuesto (código " + codigo + ")";
+    }
 
     private RideGenerator() {
     }
 
     public static byte[] generar(String xmlAutorizado) throws IOException {
+        return generar(xmlAutorizado, null);
+    }
+
+    /**
+     * @param fechaAutorizacion fecha/hora en que el SRI autorizo el comprobante
+     *                          (columna {@code ecopos_sri_comprobantes.fecha_autorizacion} -
+     *                          no viaja dentro del XML del comprobante, solo en la
+     *                          respuesta completa de autorizacion). Puede ser null
+     *                          si aun no se conoce.
+     */
+    public static byte[] generar(String xmlAutorizado, LocalDateTime fechaAutorizacion) throws IOException {
         Factura factura = desmarshallar(xmlAutorizado);
 
         try (PDDocument documento = new PDDocument()) {
@@ -62,10 +88,11 @@ public final class RideGenerator {
 
             try (PDPageContentStream cs = new PDPageContentStream(documento, pagina)) {
                 float y = PDRectangle.A4.getHeight() - MARGEN;
-                y = escribirEncabezado(documento, cs, factura, fuenteNormal, fuenteNegrita, y);
+                y = escribirEncabezado(documento, cs, factura, fuenteNormal, fuenteNegrita, y, fechaAutorizacion);
                 y = escribirDatosComprador(cs, factura, fuenteNormal, fuenteNegrita, y);
                 y = escribirDetalle(cs, factura, fuenteNormal, fuenteNegrita, y);
-                escribirTotales(cs, factura, fuenteNormal, fuenteNegrita, y);
+                y = escribirTotales(cs, factura, fuenteNormal, fuenteNegrita, y);
+                escribirInfoAdicional(cs, factura, fuenteNormal, fuenteNegrita, y);
             }
 
             ByteArrayOutputStream salida = new ByteArrayOutputStream();
@@ -85,7 +112,8 @@ public final class RideGenerator {
     }
 
     private static float escribirEncabezado(PDDocument documento, PDPageContentStream cs, Factura factura,
-                                             PDFont normal, PDFont negrita, float y) throws IOException {
+                                             PDFont normal, PDFont negrita, float y,
+                                             LocalDateTime fechaAutorizacion) throws IOException {
         var it = factura.getInfoTributaria();
 
         texto(cs, negrita, 14, MARGEN, y, "R.U.C.: " + it.getRuc());
@@ -98,6 +126,9 @@ public final class RideGenerator {
         y -= 12;
         texto(cs, normal, 8, MARGEN, y, it.getClaveAcceso());
         y -= 14;
+        texto(cs, normal, 9, MARGEN, y,
+                "FECHA Y HORA DE AUTORIZACIÓN: " + (fechaAutorizacion != null ? fechaAutorizacion.format(FORMATO_FECHA_AUTORIZACION) : ""));
+        y -= 12;
         texto(cs, normal, 9, MARGEN, y, "AMBIENTE: " + ("1".equals(it.getAmbiente()) ? "PRUEBAS" : "PRODUCCIÓN"));
         y -= 12;
         texto(cs, normal, 9, MARGEN, y, "EMISIÓN: NORMAL");
@@ -152,6 +183,16 @@ public final class RideGenerator {
             texto(cs, normal, 9, MARGEN + 190, y, info.getDireccionComprador());
             y -= 13;
         }
+        if (info.getPlaca() != null) {
+            texto(cs, negrita, 9, MARGEN, y, "Placa: ");
+            texto(cs, normal, 9, MARGEN + 190, y, info.getPlaca());
+            y -= 13;
+        }
+        if (info.getGuiaRemision() != null) {
+            texto(cs, negrita, 9, MARGEN, y, "Guía: ");
+            texto(cs, normal, 9, MARGEN + 190, y, info.getGuiaRemision());
+            y -= 13;
+        }
         return y - 6;
     }
 
@@ -159,8 +200,8 @@ public final class RideGenerator {
         linea(cs, MARGEN, y, ANCHO_PAGINA - MARGEN, y);
         y -= 14;
 
-        float[] columnasX = {MARGEN, MARGEN + 60, MARGEN + 280, MARGEN + 320, MARGEN + 390, MARGEN + 450};
-        String[] encabezados = {"Cód.", "Descripción", "Cant.", "P. Unit.", "Desc.", "Total"};
+        float[] columnasX = {MARGEN, MARGEN + 40, MARGEN + 85, MARGEN + 270, MARGEN + 310, MARGEN + 370, MARGEN + 430};
+        String[] encabezados = {"Cód.", "Cód. Aux.", "Descripción", "Cant.", "P. Unit.", "Desc.", "Total"};
         for (int i = 0; i < encabezados.length; i++) {
             texto(cs, negrita, 8, columnasX[i], y, encabezados[i]);
         }
@@ -170,34 +211,61 @@ public final class RideGenerator {
 
         for (Factura.Detalles.Detalle detalle : factura.getDetalles().getDetalle()) {
             texto(cs, normal, 8, columnasX[0], y, textoOVacio(detalle.getCodigoPrincipal()));
-            texto(cs, normal, 8, columnasX[1], y, recortar(textoOVacio(detalle.getDescripcion()), 40));
-            texto(cs, normal, 8, columnasX[2], y, formatoNumero(detalle.getCantidad()));
-            texto(cs, normal, 8, columnasX[3], y, formatoNumero(detalle.getPrecioUnitario()));
-            texto(cs, normal, 8, columnasX[4], y, formatoNumero(detalle.getDescuento()));
-            texto(cs, normal, 8, columnasX[5], y, formatoNumero(detalle.getPrecioTotalSinImpuesto()));
+            texto(cs, normal, 8, columnasX[1], y, textoOVacio(detalle.getCodigoAuxiliar()));
+            texto(cs, normal, 8, columnasX[2], y, recortar(textoOVacio(detalle.getDescripcion()), 33));
+            texto(cs, normal, 8, columnasX[3], y, formatoNumero(detalle.getCantidad()));
+            texto(cs, normal, 8, columnasX[4], y, formatoNumero(detalle.getPrecioUnitario()));
+            texto(cs, normal, 8, columnasX[5], y, formatoNumero(detalle.getDescuento()));
+            texto(cs, normal, 8, columnasX[6], y, formatoNumero(detalle.getPrecioTotalSinImpuesto()));
             y -= 12;
+
+            if (detalle.getPrecioSinSubsidio() != null) {
+                texto(cs, normal, 7, columnasX[2], y, "Precio sin subsidio: " + formatoNumero(detalle.getPrecioSinSubsidio()));
+                y -= 10;
+            }
+            if (detalle.getDetallesAdicionales() != null) {
+                for (var adicional : detalle.getDetallesAdicionales().getDetAdicional()) {
+                    texto(cs, normal, 7, columnasX[2], y, textoOVacio(adicional.getNombre()) + ": " + textoOVacio(adicional.getValor()));
+                    y -= 10;
+                }
+            }
         }
         return y - 8;
     }
 
-    private static void escribirTotales(PDPageContentStream cs, Factura factura, PDFont normal, PDFont negrita, float y) throws IOException {
+    private static float escribirTotales(PDPageContentStream cs, Factura factura, PDFont normal, PDFont negrita, float y) throws IOException {
         var info = factura.getInfoFactura();
         linea(cs, MARGEN, y, ANCHO_PAGINA - MARGEN, y);
         y -= 14;
 
-        float xEtiqueta = ANCHO_PAGINA - MARGEN - 180;
+        float xEtiqueta = ANCHO_PAGINA - MARGEN - 200;
         float xValor = ANCHO_PAGINA - MARGEN - 60;
 
         y = filaTotal(cs, normal, negrita, xEtiqueta, xValor, y, "Subtotal sin impuestos:", formatoNumero(info.getTotalSinImpuestos()));
         y = filaTotal(cs, normal, negrita, xEtiqueta, xValor, y, "Descuento:", formatoNumero(info.getTotalDescuento()));
+        if (info.getTotalSubsidio() != null) {
+            y = filaTotal(cs, normal, negrita, xEtiqueta, xValor, y, "Subsidio:", formatoNumero(info.getTotalSubsidio()));
+        }
         if (info.getTotalConImpuestos() != null) {
+            // Una fila de SUBTOTAL (base imponible) por cada tarifa/tipo de impuesto, y despues
+            // el valor del impuesto correspondiente - etiquetado por su codigo real (2=IVA,
+            // 3=ICE, 5=IRBPNR), no siempre "IVA" como antes.
             for (var totalImpuesto : info.getTotalConImpuestos().getTotalImpuesto()) {
+                String nombre = nombreImpuesto(totalImpuesto.getCodigo());
+                String sufijoTarifa = totalImpuesto.getTarifa() != null ? " " + formatoNumero(totalImpuesto.getTarifa()) + "%" : "";
                 y = filaTotal(cs, normal, negrita, xEtiqueta, xValor, y,
-                        "IVA (código " + totalImpuesto.getCodigoPorcentaje() + "):", formatoNumero(totalImpuesto.getValor()));
+                        "SUBTOTAL " + nombre + sufijoTarifa + ":", formatoNumero(totalImpuesto.getBaseImponible()));
+                y = filaTotal(cs, normal, negrita, xEtiqueta, xValor, y,
+                        nombre + sufijoTarifa + ":", formatoNumero(totalImpuesto.getValor()));
             }
         }
         y = filaTotal(cs, normal, negrita, xEtiqueta, xValor, y, "Propina:", formatoNumero(info.getPropina()));
         y = filaTotal(cs, negrita, negrita, xEtiqueta, xValor, y, "VALOR TOTAL:", formatoNumero(info.getImporteTotal()));
+        if (info.getTotalSubsidio() != null) {
+            y = filaTotal(cs, negrita, negrita, xEtiqueta, xValor, y,
+                    "VALOR TOTAL SIN SUBSIDIO:", formatoNumero(info.getImporteTotal().add(info.getTotalSubsidio())));
+            y = filaTotal(cs, normal, negrita, xEtiqueta, xValor, y, "AHORRO POR SUBSIDIO:", formatoNumero(info.getTotalSubsidio()));
+        }
 
         y -= 6;
         if (info.getPagos() != null) {
@@ -205,6 +273,23 @@ public final class RideGenerator {
                 texto(cs, normal, 8, MARGEN, y, "Forma de pago: " + pago.getFormaPago() + "  -  " + formatoNumero(pago.getTotal()));
                 y -= 11;
             }
+        }
+        return y;
+    }
+
+    /** "Información Adicional" del comprobante (email, telefono, etc. - campoAdicional del XSD, hasta 15 segun el Anexo 1). */
+    private static void escribirInfoAdicional(PDPageContentStream cs, Factura factura, PDFont normal, PDFont negrita, float y) throws IOException {
+        if (factura.getInfoAdicional() == null || factura.getInfoAdicional().getCampoAdicional().isEmpty()) {
+            return;
+        }
+        y -= 10;
+        linea(cs, MARGEN, y, ANCHO_PAGINA - MARGEN, y);
+        y -= 14;
+        texto(cs, negrita, 9, MARGEN, y, "Información Adicional");
+        y -= 12;
+        for (var campo : factura.getInfoAdicional().getCampoAdicional()) {
+            texto(cs, normal, 8, MARGEN, y, textoOVacio(campo.getNombre()) + ": " + textoOVacio(campo.getValue()));
+            y -= 11;
         }
     }
 
