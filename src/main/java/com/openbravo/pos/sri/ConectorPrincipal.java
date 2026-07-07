@@ -153,6 +153,10 @@ public final class ConectorPrincipal {
 
         if (registroPrevio.isPresent()) {
             ComprobanteRepository.RegistroExistente registro = registroPrevio.get();
+            // Reutiliza el id de la fila ya existente - si no, actualizarProgreso()
+            // (que hace UPDATE ... WHERE id = ?) apuntaria a un id recien generado
+            // que nunca se inserto, y el reintento no actualizaria nada en la tabla.
+            comprobante.setId(registro.id);
             comprobante.setIntentos(registro.intentos);
             if (registro.claveAcceso != null) {
                 comprobante.setClaveAcceso(registro.claveAcceso);

@@ -19,7 +19,7 @@ import java.util.UUID;
  */
 public class Comprobante {
 
-    private final String id;
+    private String id;
     private final String ticketId;
     private final TipoComprobante tipo;
     private final Ambiente ambiente;
@@ -69,6 +69,8 @@ public class Comprobante {
 
     // --- identidad / datos fijos ---
     public String getId() { return id; }
+    /** Reutiliza el id de una fila ya existente en ecopos_sri_comprobantes al reintentar un ticket ya procesado antes. */
+    public void setId(String id) { this.id = id; }
     public String getTicketId() { return ticketId; }
     public TipoComprobante getTipo() { return tipo; }
     public Ambiente getAmbiente() { return ambiente; }

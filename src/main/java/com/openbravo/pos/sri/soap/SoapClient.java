@@ -71,7 +71,7 @@ public class SoapClient {
     }
 
     private static RecepcionComprobantesOffline crearPuertoRecepcion(Ambiente ambiente) {
-        URL wsdl = SoapClient.class.getResource("/wsdl/RecepcionComprobantesOffline.wsdl");
+        URL wsdl = copiarWsdlATemporal("/wsdl/RecepcionComprobantesOffline.wsdl");
         RecepcionComprobantesOfflineService service = new RecepcionComprobantesOfflineService(wsdl);
         RecepcionComprobantesOffline port = service.getRecepcionComprobantesOfflinePort();
         String endpoint = ambiente == Ambiente.PRODUCCION ? ENDPOINT_RECEPCION_PRODUCCION : ENDPOINT_RECEPCION_PRUEBAS;
@@ -80,12 +80,35 @@ public class SoapClient {
     }
 
     private static AutorizacionComprobantesOffline crearPuertoAutorizacion(Ambiente ambiente) {
-        URL wsdl = SoapClient.class.getResource("/wsdl/AutorizacionComprobantesOffline.wsdl");
+        URL wsdl = copiarWsdlATemporal("/wsdl/AutorizacionComprobantesOffline.wsdl");
         AutorizacionComprobantesOfflineService service = new AutorizacionComprobantesOfflineService(wsdl);
         AutorizacionComprobantesOffline port = service.getAutorizacionComprobantesOfflinePort();
         String endpoint = ambiente == Ambiente.PRODUCCION ? ENDPOINT_AUTORIZACION_PRODUCCION : ENDPOINT_AUTORIZACION_PRUEBAS;
         configurarEndpointYTimeouts(port, endpoint);
         return port;
+    }
+
+    /**
+     * Copia el WSDL empaquetado a un archivo temporal y devuelve su URL
+     * {@code file:}. Necesario porque CXF 3.6.4 lanza un
+     * {@link NullPointerException} dentro de {@code WSDLServiceFactory} al
+     * recibir directamente una URL {@code jar:file:...!/...} (confirmado
+     * lanzando el conector desde el jar empaquetado, no solo desde el
+     * classpath de test de Maven) - un archivo real en disco lo evita.
+     */
+    private static URL copiarWsdlATemporal(String recursoClasspath) {
+        try (java.io.InputStream entrada = SoapClient.class.getResourceAsStream(recursoClasspath)) {
+            if (entrada == null) {
+                throw new IllegalStateException("No se encontro el WSDL empaquetado: " + recursoClasspath);
+            }
+            String nombreArchivo = recursoClasspath.substring(recursoClasspath.lastIndexOf('/') + 1);
+            java.io.File temporal = java.io.File.createTempFile("ecopos-sri-", "-" + nombreArchivo);
+            temporal.deleteOnExit();
+            java.nio.file.Files.copy(entrada, temporal.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return temporal.toURI().toURL();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("No se pudo copiar el WSDL empaquetado a un archivo temporal: " + recursoClasspath, e);
+        }
     }
 
     private static void configurarEndpointYTimeouts(Object port, String endpoint) {

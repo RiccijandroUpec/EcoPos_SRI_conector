@@ -55,7 +55,7 @@ public final class ComprobanteXmlMapper {
         it.setAmbiente(String.valueOf(c.getAmbiente().getCodigo()));
         it.setTipoEmision(TIPO_EMISION_NORMAL);
         it.setRazonSocial(emisor.getRazonSocial());
-        it.setNombreComercial(emisor.getNombreComercial());
+        it.setNombreComercial(vacioANulo(emisor.getNombreComercial()));
         it.setRuc(emisor.getRuc());
         it.setClaveAcceso(c.getClaveAcceso());
         it.setCodDoc(c.getTipo().getCodigo());
@@ -72,8 +72,8 @@ public final class ComprobanteXmlMapper {
 
         Factura.InfoFactura info = new Factura.InfoFactura();
         info.setFechaEmision(c.getFechaEmision().format(FORMATO_FECHA));
-        info.setDirEstablecimiento(emisor.getDirEstablecimiento());
-        info.setContribuyenteEspecial(emisor.getContribuyenteEspecial());
+        info.setDirEstablecimiento(vacioANulo(emisor.getDirEstablecimiento()));
+        info.setContribuyenteEspecial(vacioANulo(emisor.getContribuyenteEspecial()));
         info.setObligadoContabilidad(emisor.isObligadoContabilidad() ? ObligadoContabilidad.SI : ObligadoContabilidad.NO);
         info.setTipoIdentificacionComprador(cliente.getTipoIdentificacion());
         info.setRazonSocialComprador(cliente.getRazonSocial());
@@ -145,5 +145,19 @@ public final class ComprobanteXmlMapper {
     /** Los campos monetarios del comprobante se emiten siempre con 2 decimales (ficha tecnica, Anexo 1). */
     private static BigDecimal dosDecimales(BigDecimal valor) {
         return valor.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Varios campos opcionales del XSD (nombreComercial, dirEstablecimiento,
+     * contribuyenteEspecial) tienen minOccurs="0" pero tambien un
+     * minLength &gt;= 1 en su tipo - un valor en blanco (no nulo) se serializa
+     * como una etiqueta vacia (ej. {@code <nombreComercial/>}), que el SRI
+     * rechaza igual que si el elemento no debiera estar presente. Tratar
+     * blanco como ausente (null, que JAXB omite del todo) evita ese rechazo -
+     * confirmado con un envio real al SRI que era devuelto con
+     * "35: ARCHIVO NO CUMPLE ESTRUCTURA XML" hasta corregir esto.
+     */
+    private static String vacioANulo(String valor) {
+        return (valor == null || valor.isBlank()) ? null : valor;
     }
 }

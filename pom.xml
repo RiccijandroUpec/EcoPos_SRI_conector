@@ -215,6 +215,27 @@
                                     </excludes>
                                 </filter>
                             </filters>
+                            <!-- Requerido por CXF al empaquetarlo en un uber-jar: varios
+                                 jars de CXF (cxf-core, cxf-rt-wsdl, cxf-rt-frontend-jaxws...)
+                                 declaran su PROPIO META-INF/cxf/bus-extensions.txt, y sin
+                                 fusionarlos el shade se queda solo con el de UN jar -
+                                 confirmado con una ejecucion real: cxf-rt-wsdl-3.6.4.jar
+                                 registra "WSDLManagerImpl:WSDLManager:true" en su copia de
+                                 ese archivo, pero el jar sombreado (antes de este fix) no
+                                 lo tenia en absoluto, asi que Bus.getExtension(WSDLManager.class)
+                                 devolvia null y WSDLServiceFactory lanzaba un
+                                 NullPointerException sin mensaje al construir SoapClient
+                                 (solo pasaba corriendo el jar ya empaquetado, no por el
+                                 classpath de test de Maven). ServicesResourceTransformer
+                                 fusiona META-INF/services/* (formato ServiceLoader estandar);
+                                 AppendingTransformer fusiona bus-extensions.txt (formato
+                                 propio de CXF, no cubierto por el anterior). -->
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/cxf/bus-extensions.txt</resource>
+                                </transformer>
+                            </transformers>
                         </configuration>
                     </execution>
                 </executions>
