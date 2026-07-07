@@ -46,6 +46,49 @@ public class ComprobanteRepository {
         }
     }
 
+    /**
+     * Datos minimos de un comprobante ya existente, necesarios para
+     * reintentar su procesamiento sin generar un secuencial/claveAcceso
+     * distinto al ya usado (el SRI exige reenviar con la MISMA clave de
+     * acceso cuando se corrige un rechazo - ver seccion 5.10 de la ficha
+     * tecnica).
+     */
+    public static final class RegistroExistente {
+        public final String id;
+        public final String secuencial;
+        public final String claveAcceso;
+        public final EstadoComprobante estado;
+        public final int intentos;
+
+        RegistroExistente(String id, String secuencial, String claveAcceso, EstadoComprobante estado, int intentos) {
+            this.id = id;
+            this.secuencial = secuencial;
+            this.claveAcceso = claveAcceso;
+            this.estado = estado;
+            this.intentos = intentos;
+        }
+    }
+
+    public Optional<RegistroExistente> buscarPorTicketId(String ticketId) throws SQLException {
+        String sql = "SELECT id, secuencial, clave_acceso, estado, intentos " +
+            "FROM ecopos_sri_comprobantes WHERE ticket_id = ?";
+        try (Connection con = dataSource.getConnection();
+             PreparedStatement ps = con.prepareStatement(sql)) {
+            ps.setString(1, ticketId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new RegistroExistente(
+                        rs.getString("id"),
+                        rs.getString("secuencial"),
+                        rs.getString("clave_acceso"),
+                        EstadoComprobante.valueOf(rs.getString("estado")),
+                        rs.getInt("intentos")));
+            }
+        }
+    }
+
     public boolean existePorTicketId(String ticketId) throws SQLException {
         String sql = "SELECT 1 FROM ecopos_sri_comprobantes WHERE ticket_id = ?";
         try (Connection con = dataSource.getConnection();

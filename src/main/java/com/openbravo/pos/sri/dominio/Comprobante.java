@@ -107,6 +107,8 @@ public class Comprobante {
 
     public int getIntentos() { return intentos; }
     public void incrementarIntentos() { this.intentos++; }
+    /** Restaura el conteo de intentos ya persistido, al reintentar un comprobante existente. */
+    public void setIntentos(int intentos) { this.intentos = intentos; }
 
     public LocalDateTime getFechaAutorizacion() { return fechaAutorizacion; }
     public void setFechaAutorizacion(LocalDateTime fechaAutorizacion) { this.fechaAutorizacion = fechaAutorizacion; }

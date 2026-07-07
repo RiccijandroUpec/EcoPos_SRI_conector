@@ -71,7 +71,7 @@ las ventas registradas en ECOPos.
 | Firma XAdES-BES (`XadesBesSigner`) | ✅ **Escrito y probado con una firma real** (certificado autofirmado generado con `keytool` en el test, no un mock) — 3 tests, incluye verificar que usa **RSA-SHA1** (no el SHA-256 por defecto de xades4j) tal como exige la sección 6.8/Anexo 14 de la ficha técnica. Ver notas técnicas abajo sobre el conflicto de runtime JAXB con xades4j |
 | `ConfiguracionLoader` (lee/escribe `datos-emisor.properties` ↔ `DatosEmisor`) | ✅ **Escrito y probado** — 4 tests con round-trip real a disco (`@TempDir`), incluyendo verificar que la clave del certificado nunca queda en texto plano en el archivo (`ClaveCifrador`, AES-GCM) |
 | Pantalla Swing de configuración (`ConfiguracionFrame`) | ✅ Escrita y compila; carga/guarda contra `ConfiguracionLoader`. **No se pudo verificar visualmente en este entorno** (el sandbox de ejecución no comparte sesión de escritorio interactiva con este proceso — ver nota abajo). Corrida tú mismo antes de confiar en el layout. Falta decidir cómo la abre el administrador (standalone vs. botón-hook en ECOPos) |
-| Clase `Main`/orquestador (une todo en un proceso que corra continuamente) | ⏳ Siguiente paso — **no existe todavía en absoluto** |
+| Clase orquestadora `ConectorPrincipal` (une todo en un proceso que corra continuamente) | ✅ **Escrita y probada de punta a punta contra servicios reales** (MySQL real + servidor de pruebas real del SRI, no mocks) — ver hallazgo importante abajo sobre el resultado de esa prueba |
 
 ## ⚠️ Hallazgo importante: el WSDL oficial no coincide con el servidor real
 
@@ -99,17 +99,67 @@ acceso inexistente) — ambas desserializan correctamente ahora.
 Si en algún momento se vuelve a descargar el WSDL "fresco" del SRI, hay que
 re-aplicar este mismo ajuste antes de regenerar los stubs.
 
+## ⚠️ Hallazgo importante: el SRI real rechaza el XML de la prueba end-to-end con "no cumple estructura"
+
+Se ejecutó `ConectorPrincipal.procesarTicket(...)` de punta a punta contra
+datos reales: un ticket real insertado en la base `ecopos` (MySQL local),
+un `.p12` autofirmado generado con `keytool` (no un mock), y el servidor de
+pruebas real del SRI (`celcer.sri.gob.ec`). El resultado, verificado y no
+simulado:
+
+1. `TicketReader` leyó el ticket correctamente.
+2. `TicketComprobanteMapper` generó el `Comprobante`, con `claveAcceso` de
+   49 dígitos estructuralmente correcta (fecha/tipo/RUC/ambiente/serie/
+   secuencial/código numérico/tipoEmisión/dígito verificador módulo 11,
+   verificado dígito por dígito).
+3. `ComprobanteXmlMapper` + `FacturaXmlWriter` generaron el XML.
+4. `XadesBesSigner` lo firmó con XAdES-BES/RSA-SHA1 sin errores.
+5. `SoapClient.enviarRecepcion` lo envió al SRI real, que respondió
+   `estado=DEVUELTA` con el mensaje `35: ARCHIVO NO CUMPLE ESTRUCTURA XML`.
+6. `ConectorPrincipal` interpretó correctamente el rechazo, guardó
+   `estado=RECHAZADO` y el mensaje de error en `ecopos_sri_comprobantes`, y
+   no lo envió a Autorización (comportamiento correcto).
+
+**Es decir: el orquestador y toda la tubería (lectura → mapeo → firma →
+envío → interpretación de respuesta → persistencia) funcionan correctamente
+— el problema es el *contenido* del XML, no el código que lo mueve.**
+
+Se validó el XML (sin firmar y firmado) contra el XSD vendorizado de este
+proyecto (`factura_V2.1.0.xsd`, sacado de un mirror de terceros porque
+`www.sri.gob.ec` no es alcanzable desde este entorno — ver más abajo) con
+un validador XSD real de Java, y **ambos validan sin errores**. Esto apunta
+a que el rechazo real del SRI no es un error de XML Schema puro, sino algo
+que el backend del SRI valida además del XSD — el sospechoso más probable
+es el **certificado autofirmado usado para la prueba**: no fue emitido por
+una entidad certificadora acreditada en Ecuador (Security Data, ANF AC,
+BCE, etc.), y varias implementaciones de este tipo de servicio agrupan un
+rechazo de firma/certificado no reconocido bajo el mismo código genérico de
+"estructura inválida" en vez de un mensaje específico. **No se pudo
+confirmar esto con certeza** sin un certificado .p12 real acreditado por el
+SRI — es la siguiente cosa a probar en cuanto haya uno disponible.
+
+**Cómo reproducir esta prueba:** `ConectorPrincipalManualE2ETest`
+(`src/test/java/com/openbravo/pos/sri/ConectorPrincipalManualE2ETest.java`)
+documenta el procedimiento completo (queda `@Disabled` a propósito, no corre
+en CI). Recuerda borrar los datos de prueba de la base `ecopos` al terminar
+— no lo hace el test automáticamente.
+
 ## Siguiente paso inmediato
 
-1. Ejecuta `src/main/resources/sql/001_create_ecopos_sri_comprobantes.sql`
-   (actualizado, incluye la columna `secuencial`) contra la base `ecopos`.
+1. **Conseguir un certificado `.p12` real, emitido por una entidad
+   certificadora acreditada por el SRI**, y repetir la prueba end-to-end
+   (`ConectorPrincipalManualE2ETest`) para confirmar si el rechazo
+   "ARCHIVO NO CUMPLE ESTRUCTURA XML" desaparece — esto acota si la causa
+   era el certificado autofirmado o algo más en el XML.
 2. **Corre `ConfiguracionFrame` tú mismo y confirma que el layout se ve bien**
    (no se pudo verificar visualmente en esta sesión, ver nota abajo).
-3. La clase `Main`/orquestador que una `VigilantePendientes` +
-   `TicketReader` + `TicketComprobanteMapper` + `ComprobanteXmlMapper` +
-   `XadesBesSigner` + `SoapClient` + `ComprobanteRepository` en un solo
-   proceso — esa misma clase es donde se decide cómo se lanza
-   `ConfiguracionFrame` (standalone vs. botón-hook en ECOPos).
+3. Decidir cómo el administrador abre `ConfiguracionFrame` (standalone vs.
+   botón-hook en ECOPos) y, si aplica, implementar ese hook (dato, no
+   código, en `RESOURCES` — mismo patrón que `Ticket.Close`).
+4. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
+   en la instalación real donde corra el conector — `ConectorPrincipal`
+   usa `localhost`/`3306`/`ecopos`/`root`/`` como valores por defecto si el
+   archivo no existe, pensado para XAMPP local, no para producción.
 
 ## Nota: verificación visual de `ConfiguracionFrame` no realizada
 
