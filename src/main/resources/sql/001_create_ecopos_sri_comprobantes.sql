@@ -7,6 +7,7 @@
 CREATE TABLE IF NOT EXISTS ecopos_sri_comprobantes (
     id                  VARCHAR(36)     NOT NULL,               -- UUID propio del comprobante
     ticket_id           VARCHAR(255)    NOT NULL,               -- FK a TICKETS.ID (RECEIPTS.ID)
+    secuencial          VARCHAR(9)      NULL,                   -- secuencial de 9 digitos asignado a este comprobante
     clave_acceso        VARCHAR(49)     NULL,                   -- clave de acceso de 49 digitos (una vez generada)
     numero_autorizacion VARCHAR(49)     NULL,                   -- numero de autorizacion del SRI (si autorizado)
     ambiente            ENUM('PRUEBAS','PRODUCCION') NOT NULL,
@@ -25,7 +26,8 @@ CREATE TABLE IF NOT EXISTS ecopos_sri_comprobantes (
     PRIMARY KEY (id),
     UNIQUE KEY uq_ecopos_sri_ticket (ticket_id),
     KEY idx_ecopos_sri_estado (estado),
-    KEY idx_ecopos_sri_clave_acceso (clave_acceso)
+    KEY idx_ecopos_sri_clave_acceso (clave_acceso),
+    KEY idx_ecopos_sri_secuencial (secuencial)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Nota: no se declara FOREIGN KEY (ticket_id) REFERENCES TICKETS(ID) a

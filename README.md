@@ -65,22 +65,28 @@ las ventas registradas en ECOPos.
 | Cliente SOAP (stubs generados: `RecepcionComprobantesOffline`, `AutorizacionComprobantesOffline`) | ✅ Clases generadas y compilando (`target/generated-sources/cxf/...`). Falta escribir el wrapper `SoapClient` que las invoque |
 | XSD del comprobante (factura v2.1.0) | ✅ **`factura_V2.1.0.xsd` real integrado** (ver `src/main/resources/xsd-README.md` para procedencia). `jaxb2-maven-plugin` genera 38 clases (`Factura`, `InfoTributaria`, `Detalle`, `Reembolsos`, etc.) en cada build, `mvn clean test` en verde |
 | Mapeo `Comprobante` (dominio) → clases JAXB → XML (`com.openbravo.pos.sri.xml`) | ✅ **`ComprobanteXmlMapper` + `FacturaXmlWriter` escritos y probados** — 6 tests, incluyendo generación de XML real verificado campo por campo contra la ficha técnica (`infoTributaria`, `infoFactura`, `detalles`, impuestos con `codigoPorcentaje` resuelto vía `CodigoPorcentajeIva`, montos siempre a 2 decimales) |
-| Mapeo `TicketCrudo` (lectura cruda de ECOPos) → `Comprobante` (dominio) | ⏳ Siguiente paso — falta resolver `codigoPrincipal`/`descripcion` desde `LineaCruda`, agrupar impuestos, generar la `ClaveAcceso` con el secuencial real, y construir `Cliente`/`Pago` desde `TicketCrudo` |
+| Mapeo `TicketCrudo` → `Comprobante` (`TicketComprobanteMapper`) | ✅ **Escrito y probado** — 5 tests, más una prueba manual de la cadena completa `TicketCrudo → Comprobante → XML` con dos líneas de distinta tarifa (15% y exenta), agrupadas correctamente en dos `<totalImpuesto>`. Resuelve tipo de identificación del cliente por longitud (`TipoIdentificacionResolver`) y forma de pago por heurística de nombre (`FormaPagoResolver`) — **ambas heurísticas deben revisarse contra los datos reales de cada instalación antes de producción** |
+| `secuencial` en `ecopos_sri_comprobantes` | ✅ Columna agregada (no existía) + `ComprobanteRepository.siguienteSecuencial()` (MAX+1, sin bloqueo — suficiente mientras el conector procese un ticket a la vez) |
+| `SoapClient` (envoltorio sobre los stubs CXF) | ⏳ Siguiente paso |
 | Firma XAdES-BES | ⏳ Siguiente paso |
-| Pantalla Swing de configuración | ⏳ Siguiente paso |
+| `ConfiguracionLoader` (lee `datos-emisor.properties` → `DatosEmisor`) | ⏳ Siguiente paso |
+| Pantalla Swing de configuración | ⏳ Siguiente paso — falta decidir cómo la abre el administrador (standalone vs. botón-hook en ECOPos) |
+| Clase `Main`/orquestador (une todo en un proceso que corra continuamente) | ⏳ Siguiente paso — **no existe todavía en absoluto** |
 
 ## Siguiente paso inmediato
 
 1. Ejecuta `src/main/resources/sql/001_create_ecopos_sri_comprobantes.sql`
-   contra la base `ecopos`.
-2. Escribe el mapeo `TicketCrudo` → `Comprobante` (falta resolver el
-   secuencial real y armar la `ClaveAcceso`, agrupar impuestos por tarifa
-   para `totalesPorImpuesto`, y decidir `codigoPrincipal` desde
-   `LineaCruda.referencia`).
-3. Escribe el `SoapClient` que envuelve los stubs CXF ya generados
+   (actualizado, incluye la columna `secuencial`) contra la base `ecopos`.
+2. Escribe el `SoapClient` que envuelve los stubs CXF ya generados
    (`RecepcionComprobantesOffline`, `AutorizacionComprobantesOffline`).
-4. Firma XAdES-BES sobre el XML ya generado (`FacturaXmlWriter.toXml(...)`),
+3. Firma XAdES-BES sobre el XML ya generado (`FacturaXmlWriter.toXml(...)`),
    antes de enviarlo.
+4. `ConfiguracionLoader` + pantalla Swing para que el administrador cargue
+   `DatosEmisor` (RUC, razón social, establecimiento, certificado `.p12`)
+   sin editar un `.properties` a mano.
+5. La clase `Main`/orquestador que una `VigilantePendientes` +
+   `TicketReader` + `TicketComprobanteMapper` + `ComprobanteXmlMapper` +
+   firma + `SoapClient` + `ComprobanteRepository` en un solo proceso.
 
 ## Notas técnicas de esta iteración (2026-07-06)
 

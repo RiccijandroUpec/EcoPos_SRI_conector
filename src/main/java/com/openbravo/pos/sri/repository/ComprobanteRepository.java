@@ -59,17 +59,42 @@ public class ComprobanteRepository {
 
     public void insertar(Comprobante c) throws SQLException {
         String sql = "INSERT INTO ecopos_sri_comprobantes " +
-            "(id, ticket_id, ambiente, estado, fecha_emision, intentos) " +
-            "VALUES (?, ?, ?, ?, ?, ?)";
+            "(id, ticket_id, secuencial, ambiente, estado, fecha_emision, intentos) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)";
         try (Connection con = dataSource.getConnection();
              PreparedStatement ps = con.prepareStatement(sql)) {
             ps.setString(1, c.getId());
             ps.setString(2, c.getTicketId());
-            ps.setString(3, c.getAmbiente().name());
-            ps.setString(4, c.getEstado().name());
-            ps.setTimestamp(5, Timestamp.valueOf(c.getFechaEmision()));
-            ps.setInt(6, c.getIntentos());
+            ps.setString(3, c.getSecuencial());
+            ps.setString(4, c.getAmbiente().name());
+            ps.setString(5, c.getEstado().name());
+            ps.setTimestamp(6, Timestamp.valueOf(c.getFechaEmision()));
+            ps.setInt(7, c.getIntentos());
             ps.executeUpdate();
+        }
+    }
+
+    /**
+     * Siguiente secuencial de 9 digitos a asignar (el mayor ya usado + 1,
+     * con ceros a la izquierda). Devuelve "000000001" si todavia no existe
+     * ningun comprobante. Asume un unico establecimiento/punto de emision
+     * por instalacion del conector (ver DatosEmisor) - si en el futuro se
+     * soportan varios, este metodo debe filtrar por ellos.
+     *
+     * No es seguro ante llamadas concurrentes (no hay bloqueo/transaccion);
+     * suficiente mientras el conector procese un ticket a la vez.
+     */
+    public String siguienteSecuencial() throws SQLException {
+        String sql = "SELECT MAX(CAST(secuencial AS UNSIGNED)) FROM ecopos_sri_comprobantes " +
+            "WHERE secuencial IS NOT NULL";
+        try (Connection con = dataSource.getConnection();
+             PreparedStatement ps = con.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            long maximo = 0;
+            if (rs.next()) {
+                maximo = rs.getLong(1);
+            }
+            return String.format("%09d", maximo + 1);
         }
     }
 
