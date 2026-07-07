@@ -71,7 +71,9 @@ las ventas registradas en ECOPos.
 | Firma XAdES-BES (`XadesBesSigner`) | ✅ **Escrito y probado con una firma real** (certificado autofirmado generado con `keytool` en el test, no un mock) — 3 tests, incluye verificar que usa **RSA-SHA1** (no el SHA-256 por defecto de xades4j) tal como exige la sección 6.8/Anexo 14 de la ficha técnica. Ver notas técnicas abajo sobre el conflicto de runtime JAXB con xades4j |
 | `ConfiguracionLoader` (lee/escribe `datos-emisor.properties` ↔ `DatosEmisor`) | ✅ **Escrito y probado** — 4 tests con round-trip real a disco (`@TempDir`), incluyendo verificar que la clave del certificado nunca queda en texto plano en el archivo (`ClaveCifrador`, AES-GCM) |
 | Pantalla Swing de configuración (`ConfiguracionFrame`) | ✅ Escrita y compila; carga/guarda contra `ConfiguracionLoader`. **No se pudo verificar visualmente en este entorno** (el sandbox de ejecución no comparte sesión de escritorio interactiva con este proceso — ver nota abajo). Corrida tú mismo antes de confiar en el layout. Falta decidir cómo la abre el administrador (standalone vs. botón-hook en ECOPos) |
-| Clase orquestadora `ConectorPrincipal` (une todo en un proceso que corra continuamente) | ✅ **Escrita y probada de punta a punta contra servicios reales** (MySQL real + servidor de pruebas real del SRI, no mocks) — ver hallazgo importante abajo sobre el resultado de esa prueba |
+| Clase orquestadora `ConectorPrincipal` (une todo en un proceso que corra continuamente) | ✅ **Escrita y probada de punta a punta contra servicios reales, con resultado AUTORIZADO** (MySQL real + certificado real acreditado + servidor real de pruebas del SRI, no mocks) — ver hallazgo abajo con los 4 bugs reales encontrados y corregidos en el camino |
+| Botón en EcoPos para abrir `ConfiguracionFrame` (Administración > Sistema) | ✅ **Escrito y probado** — hook data-only (`SriConnectorConfig.bs` + `Menu.Root`/`Role.Administrator` en el repo de EcoPos), lanza el jar del conector como proceso externo. Confirmado con un lanzamiento real (título de ventana verificado vía la tabla de procesos del SO) |
+| Botones "Facturar SRI: SI/NO" en la pantalla de venta de EcoPos | ✅ **Escritos y probados con un ticket real** — hook data-only (`script.SriInvoiceOn/Off.txt` + `Ticket.Buttons`/3 roles en el repo de EcoPos), marcan un atributo por ticket que `Ticket.Close` lee para decidir si factura. Por defecto NO factura si el cajero no toca el control; el ticket siempre se imprime igual |
 
 ## ⚠️ Hallazgo importante: el WSDL oficial no coincide con el servidor real
 
@@ -99,44 +101,54 @@ acceso inexistente) — ambas desserializan correctamente ahora.
 Si en algún momento se vuelve a descargar el WSDL "fresco" del SRI, hay que
 re-aplicar este mismo ajuste antes de regenerar los stubs.
 
-## ⚠️ Hallazgo importante: el SRI real rechaza el XML de la prueba end-to-end con "no cumple estructura"
+## ✅ Verificado de punta a punta con un certificado real: el SRI autoriza el comprobante
 
-Se ejecutó `ConectorPrincipal.procesarTicket(...)` de punta a punta contra
-datos reales: un ticket real insertado en la base `ecopos` (MySQL local),
-un `.p12` autofirmado generado con `keytool` (no un mock), y el servidor de
-pruebas real del SRI (`celcer.sri.gob.ec`). El resultado, verificado y no
-simulado:
+Se ejecutó `ConectorPrincipal.procesarTicket(...)` contra datos 100% reales:
+un ticket real cerrado desde EcoPos (botón "Facturar SRI: SI" en la pantalla
+de venta — ver más abajo), el jar empaquetado del conector (no el classpath
+de test de Maven), un certificado `.p12` real acreditado por **Security
+Data S.A.** (entidad certificadora ecuatoriana), y el servidor de pruebas
+real del SRI (`celcer.sri.gob.ec`), en ambiente **Pruebas**. Resultado:
 
-1. `TicketReader` leyó el ticket correctamente.
-2. `TicketComprobanteMapper` generó el `Comprobante`, con `claveAcceso` de
-   49 dígitos estructuralmente correcta (fecha/tipo/RUC/ambiente/serie/
-   secuencial/código numérico/tipoEmisión/dígito verificador módulo 11,
-   verificado dígito por dígito).
-3. `ComprobanteXmlMapper` + `FacturaXmlWriter` generaron el XML.
-4. `XadesBesSigner` lo firmó con XAdES-BES/RSA-SHA1 sin errores.
-5. `SoapClient.enviarRecepcion` lo envió al SRI real, que respondió
-   `estado=DEVUELTA` con el mensaje `35: ARCHIVO NO CUMPLE ESTRUCTURA XML`.
-6. `ConectorPrincipal` interpretó correctamente el rechazo, guardó
-   `estado=RECHAZADO` y el mensaje de error en `ecopos_sri_comprobantes`, y
-   no lo envió a Autorización (comportamiento correcto).
+```
+estado=AUTORIZADO
+claveAcceso=0707202601045002268600110010010000000018046172214
+numeroAutorizacion=0707202601045002268600110010010000000018046172214
+```
 
-**Es decir: el orquestador y toda la tubería (lectura → mapeo → firma →
-envío → interpretación de respuesta → persistencia) funcionan correctamente
-— el problema es el *contenido* del XML, no el código que lo mueve.**
+Llegar hasta aquí requirió encontrar y arreglar **cuatro bugs reales**,
+cada uno confirmado repitiendo la misma prueba real después del arreglo:
 
-Se validó el XML (sin firmar y firmado) contra el XSD vendorizado de este
-proyecto (`factura_V2.1.0.xsd`, sacado de un mirror de terceros porque
-`www.sri.gob.ec` no es alcanzable desde este entorno — ver más abajo) con
-un validador XSD real de Java, y **ambos validan sin errores**. Esto apunta
-a que el rechazo real del SRI no es un error de XML Schema puro, sino algo
-que el backend del SRI valida además del XSD — el sospechoso más probable
-es el **certificado autofirmado usado para la prueba**: no fue emitido por
-una entidad certificadora acreditada en Ecuador (Security Data, ANF AC,
-BCE, etc.), y varias implementaciones de este tipo de servicio agrupan un
-rechazo de firma/certificado no reconocido bajo el mismo código genérico de
-"estructura inválida" en vez de un mensaje específico. **No se pudo
-confirmar esto con certeza** sin un certificado .p12 real acreditado por el
-SRI — es la siguiente cosa a probar en cuanto haya uno disponible.
+1. **El jar empaquetado no arrancaba en absoluto** (`SecurityException:
+   Invalid signature file digest for Manifest main attributes`) -
+   `maven-shade-plugin` fusionaba los `META-INF/*.SF` de una dependencia
+   firmada sin quitarlos. Arreglado con un filtro de exclusión en el
+   shade-plugin.
+2. **`SoapClient` lanzaba un `NullPointerException` sin mensaje** dentro de
+   CXF (`WSDLServiceFactory`) al construirse desde el jar empaquetado (no
+   pasaba corriendo por Maven). Causa real: `cxf-rt-wsdl` registra
+   `WSDLManagerImpl` en su propio `META-INF/cxf/bus-extensions.txt`, pero
+   varios jars de CXF declaran ese mismo archivo y el shading se quedaba
+   solo con uno, perdiendo el registro (`Bus.getExtension(WSDLManager.class)`
+   volvía `null`). Arreglado con un `AppendingTransformer` para ese recurso,
+   más copiar el WSDL a un archivo temporal real antes de construir el
+   `Service` de JAX-WS (defensa extra contra rarezas de URLs `jar:`).
+3. **Los reintentos de un ticket ya procesado no actualizaban nada en la
+   base** - `TicketComprobanteMapper.map` siempre genera un `Comprobante`
+   con un id `UUID` nuevo, pero `ConectorPrincipal` solo reutilizaba el
+   `secuencial`/`claveAcceso` viejos, nunca el id de la fila ya insertada -
+   el `UPDATE ... WHERE id = ?` de `actualizarProgreso()` apuntaba a un id
+   que nunca existió, y la tabla se quedaba mostrando el resultado del
+   primerísimo intento para siempre. Arreglado agregando `Comprobante.setId`
+   y restaurando el id de la fila existente al reintentar.
+4. **El SRI real rechazaba el XML con `35: ARCHIVO NO CUMPLE ESTRUCTURA
+   XML`**, incluso con un certificado acreditado válido. Causa real:
+   `nombreComercial`/`dirEstablecimiento`/`contribuyenteEspecial` son
+   `minOccurs="0"` en el XSD, pero sus tipos también exigen `minLength >= 1`
+   - un valor configurado en blanco (no nulo) se serializaba como una
+   etiqueta vacía (`<nombreComercial/>`), que el SRI trata igual que una
+   estructura malformada. Arreglado tratando blanco como ausente (`null`,
+   que JAXB omite del todo) en `ComprobanteXmlMapper`.
 
 **Cómo reproducir esta prueba:** `ConectorPrincipalManualE2ETest`
 (`src/test/java/com/openbravo/pos/sri/ConectorPrincipalManualE2ETest.java`)
@@ -146,20 +158,20 @@ en CI). Recuerda borrar los datos de prueba de la base `ecopos` al terminar
 
 ## Siguiente paso inmediato
 
-1. **Conseguir un certificado `.p12` real, emitido por una entidad
-   certificadora acreditada por el SRI**, y repetir la prueba end-to-end
-   (`ConectorPrincipalManualE2ETest`) para confirmar si el rechazo
-   "ARCHIVO NO CUMPLE ESTRUCTURA XML" desaparece — esto acota si la causa
-   era el certificado autofirmado o algo más en el XML.
+1. **Probar el ambiente de Producción** una vez que el negocio esté listo
+   para emitir facturas reales (hasta ahora todo se probó en `PRUEBAS` a
+   propósito).
 2. **Corre `ConfiguracionFrame` tú mismo y confirma que el layout se ve bien**
-   (no se pudo verificar visualmente en esta sesión, ver nota abajo).
-3. Decidir cómo el administrador abre `ConfiguracionFrame` (standalone vs.
-   botón-hook en ECOPos) y, si aplica, implementar ese hook (dato, no
-   código, en `RESOURCES` — mismo patrón que `Ticket.Close`).
-4. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
+   (no se pudo verificar visualmente en esta sesión, ver nota abajo) -
+   aunque ya se confirmó indirectamente que funciona: se usó para guardar
+   los datos reales del emisor que llevaron a la prueba de arriba.
+3. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
    en la instalación real donde corra el conector — `ConectorPrincipal`
    usa `localhost`/`3306`/`ecopos`/`root`/`` como valores por defecto si el
    archivo no existe, pensado para XAMPP local, no para producción.
+4. Dejar `ConectorPrincipal` corriendo de forma continua junto a EcoPos
+   (tarea programada de Windows, servicio, o similar) - hasta ahora solo se
+   ha probado lanzándolo a mano para cada ticket.
 
 ## Nota: verificación visual de `ConfiguracionFrame` no realizada
 
