@@ -67,24 +67,48 @@ las ventas registradas en ECOPos.
 | Mapeo `Comprobante` (dominio) → clases JAXB → XML (`com.openbravo.pos.sri.xml`) | ✅ **`ComprobanteXmlMapper` + `FacturaXmlWriter` escritos y probados** — 6 tests, incluyendo generación de XML real verificado campo por campo contra la ficha técnica (`infoTributaria`, `infoFactura`, `detalles`, impuestos con `codigoPorcentaje` resuelto vía `CodigoPorcentajeIva`, montos siempre a 2 decimales) |
 | Mapeo `TicketCrudo` → `Comprobante` (`TicketComprobanteMapper`) | ✅ **Escrito y probado** — 5 tests, más una prueba manual de la cadena completa `TicketCrudo → Comprobante → XML` con dos líneas de distinta tarifa (15% y exenta), agrupadas correctamente en dos `<totalImpuesto>`. Resuelve tipo de identificación del cliente por longitud (`TipoIdentificacionResolver`) y forma de pago por heurística de nombre (`FormaPagoResolver`) — **ambas heurísticas deben revisarse contra los datos reales de cada instalación antes de producción** |
 | `secuencial` en `ecopos_sri_comprobantes` | ✅ Columna agregada (no existía) + `ComprobanteRepository.siguienteSecuencial()` (MAX+1, sin bloqueo — suficiente mientras el conector procese un ticket a la vez) |
-| `SoapClient` (envoltorio sobre los stubs CXF) | ⏳ Siguiente paso |
+| `SoapClient` (envoltorio sobre los stubs CXF) | ✅ **Escrito y probado contra el servidor real de pruebas del SRI** (`celcer.sri.gob.ec`, no solo compilación) — ver hallazgo importante abajo |
 | Firma XAdES-BES | ⏳ Siguiente paso |
 | `ConfiguracionLoader` (lee `datos-emisor.properties` → `DatosEmisor`) | ⏳ Siguiente paso |
 | Pantalla Swing de configuración | ⏳ Siguiente paso — falta decidir cómo la abre el administrador (standalone vs. botón-hook en ECOPos) |
 | Clase `Main`/orquestador (une todo en un proceso que corra continuamente) | ⏳ Siguiente paso — **no existe todavía en absoluto** |
 
+## ⚠️ Hallazgo importante: el WSDL oficial no coincide con el servidor real
+
+Al probar `SoapClient` contra el servidor de pruebas real (`celcer.sri.gob.ec`,
+no un mock), la desserialización fallaba con
+`Unmarshalling Error: elemento inesperado (URI:"", local:"comprobante")`.
+
+Causa: en ambos WSDL, los elementos `<comprobante>`, `<mensaje>` y
+`<autorizacion>` estaban declarados como `ref="tns:..."` (referencia a un
+elemento global), lo que por regla de XML Schema los obliga a llevar
+namespace en el XML sin importar `elementFormDefault`. Pero **el servidor
+real del SRI los devuelve sin namespace** — un desajuste entre el contrato
+publicado y la implementación real del servicio (no es un error de este
+proyecto). Confirmado inspeccionando el XML crudo de la respuesta con una
+petición SOAP armada a mano.
+
+**Arreglo aplicado**: se editaron los dos `.wsdl` locales
+(`src/main/resources/wsdl/*.wsdl`) para declarar esos tres elementos como
+locales (`name="..." type="tns:..."`) en vez de `ref=`, para que sigan la
+regla `elementFormDefault="unqualified"` del propio esquema y coincidan con
+lo que el servidor realmente envía. Verificado con dos llamadas reales
+(Recepción con un XML inválido a propósito, Autorización con una clave de
+acceso inexistente) — ambas desserializan correctamente ahora.
+
+Si en algún momento se vuelve a descargar el WSDL "fresco" del SRI, hay que
+re-aplicar este mismo ajuste antes de regenerar los stubs.
+
 ## Siguiente paso inmediato
 
 1. Ejecuta `src/main/resources/sql/001_create_ecopos_sri_comprobantes.sql`
    (actualizado, incluye la columna `secuencial`) contra la base `ecopos`.
-2. Escribe el `SoapClient` que envuelve los stubs CXF ya generados
-   (`RecepcionComprobantesOffline`, `AutorizacionComprobantesOffline`).
-3. Firma XAdES-BES sobre el XML ya generado (`FacturaXmlWriter.toXml(...)`),
+2. Firma XAdES-BES sobre el XML ya generado (`FacturaXmlWriter.toXml(...)`),
    antes de enviarlo.
-4. `ConfiguracionLoader` + pantalla Swing para que el administrador cargue
+3. `ConfiguracionLoader` + pantalla Swing para que el administrador cargue
    `DatosEmisor` (RUC, razón social, establecimiento, certificado `.p12`)
    sin editar un `.properties` a mano.
-5. La clase `Main`/orquestador que una `VigilantePendientes` +
+4. La clase `Main`/orquestador que una `VigilantePendientes` +
    `TicketReader` + `TicketComprobanteMapper` + `ComprobanteXmlMapper` +
    firma + `SoapClient` + `ComprobanteRepository` en un solo proceso.
 

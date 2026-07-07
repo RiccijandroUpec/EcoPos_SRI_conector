@@ -35,7 +35,7 @@
       <xs:element minOccurs="0" name="autorizaciones">
         <xs:complexType>
           <xs:sequence>
-            <xs:element maxOccurs="unbounded" minOccurs="0" ref="tns:autorizacion"/>
+            <xs:element maxOccurs="unbounded" minOccurs="0" name="autorizacion" type="tns:autorizacion"/>
           </xs:sequence>
         </xs:complexType>
       </xs:element>
@@ -52,7 +52,7 @@
       <xs:element minOccurs="0" name="mensajes">
         <xs:complexType>
           <xs:sequence>
-            <xs:element maxOccurs="unbounded" minOccurs="0" ref="tns:mensaje"/>
+            <xs:element maxOccurs="unbounded" minOccurs="0" name="mensaje" type="tns:mensaje"/>
           </xs:sequence>
         </xs:complexType>
       </xs:element>
@@ -87,7 +87,7 @@
       <xs:element minOccurs="0" name="autorizaciones">
         <xs:complexType>
           <xs:sequence>
-            <xs:element maxOccurs="unbounded" minOccurs="0" ref="tns:autorizacion"/>
+            <xs:element maxOccurs="unbounded" minOccurs="0" name="autorizacion" type="tns:autorizacion"/>
           </xs:sequence>
         </xs:complexType>
       </xs:element>

@@ -30,7 +30,7 @@
       <xs:element minOccurs="0" name="comprobantes">
         <xs:complexType>
           <xs:sequence>
-            <xs:element maxOccurs="unbounded" minOccurs="0" ref="tns:comprobante"/>
+            <xs:element maxOccurs="unbounded" minOccurs="0" name="comprobante" type="tns:comprobante"/>
           </xs:sequence>
         </xs:complexType>
       </xs:element>
@@ -43,7 +43,7 @@
       <xs:element minOccurs="0" name="mensajes">
         <xs:complexType>
           <xs:sequence>
-            <xs:element maxOccurs="unbounded" minOccurs="0" ref="tns:mensaje"/>
+            <xs:element maxOccurs="unbounded" minOccurs="0" name="mensaje" type="tns:mensaje"/>
           </xs:sequence>
         </xs:complexType>
       </xs:element>
