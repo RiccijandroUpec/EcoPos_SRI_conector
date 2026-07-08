@@ -90,7 +90,7 @@ el conector, no para quien lo instala.
 | Botones "Facturar SRI: SI/NO" en la pantalla de venta de EcoPos | ✅ **Rediseñados como interruptor GLOBAL persistente, con íconos, y verificados visualmente** (ver "Verificación visual" abajo — se ven del mismo tamaño que los botones existentes "Imp. Ticket"/"Abrir cajón", íconos nítidos y con color claro por estado) — ya no son botones de solo texto ni marcan un atributo por-ticket (eso reseteaba a "NO" en cada venta nueva). Ahora escriben en un archivo compartido (`sri-conector/facturacion-global.properties`, clave `activo`) que `Ticket.Close.xml` lee directo: una vez en SI, aplica a **todas** las ventas hasta que alguien presione NO (elegido así explícitamente por el usuario, sin excepción por ticket). Íconos propios (`img.sriinvoiceon`/`img.sriinvoiceoff`, check verde / X gris, ver "Hallazgo: límite del framework de botones" abajo) insertados como filas nuevas en `RESOURCES`. El botón SI sigue ofreciendo capturar el correo del cliente para esa venta puntual si su perfil no tiene uno guardado. El ticket siempre se imprime igual, sin importar este ajuste |
 | Historial de facturación (`HistorialFrame`) | ✅ **Escrito y probado** — lista todo `ecopos_sri_comprobantes` (facturas y notas de crédito), colorea por estado, y marca en naranja los comprobantes ENVIADO/ERROR con más de 24h sin resolverse (aviso operativo, no una cita textual de un plazo legal del SRI) |
 | RIDE en PDF (`RideGenerator` / `RideNotaCreditoGenerator`) | ✅ **Escrito y verificado** (render-a-imagen con `PDFRenderer`, no solo extracción de texto) contra un layout de referencia real de otro sistema — cubre fecha/hora de autorización, subtotales por tarifa/tipo de impuesto (con IVA/ICE/IRBPNR etiquetados por su código real), código auxiliar y detalle adicional por línea, subsidio, e Información Adicional |
-| **Nota de Crédito (anulación de facturas)** (`AnulacionService`, `NotaCreditoXmlMapper`, `AnulacionFrame`) | ✅ **Escrita y probada de punta a punta contra el SRI real** (firma, Recepción, Autorización) — el SRI la **rechazó** con `69: ERROR EN LA IDENTIFICACION DEL RECEPTOR` al anular una factura emitida a "CONSUMIDOR FINAL" (ver hallazgo abajo). El flujo técnico (XML válido, firma, envío, consulta) funciona; falta confirmar con un comprador identificado si el rechazo es por eso |
+| **Nota de Crédito (anulación de facturas)** (`AnulacionService`, `NotaCreditoXmlMapper`, `AnulacionFrame`) | ✅ **Probada de punta a punta contra el SRI real, dos veces**: contra una factura a CONSUMIDOR FINAL (rechazada, `69: ERROR EN LA IDENTIFICACION DEL RECEPTOR`) y contra una factura a un comprador identificado con cédula real (AUTORIZADO, sin problema) — ver hallazgo abajo. `AnulacionService` ahora bloquea el intento con un mensaje claro si la factura original es a consumidor final, antes de llamar al SRI |
 | `notaCredito_V1.1.0.xsd` | ✅ Vendorizado desde el mismo mirror que `factura_V2.1.0.xsd` (`xprl-gjf/sri-efactura-core`) — paquete Java propio (`xml.generado.notacredito`) porque comparte nombres de tipo con el XSD de factura pero con forma distinta |
 | Envío por correo (`NotificadorCorreo`, `ConfiguracionCorreoFrame`) | ✅ Escrito y compila (jakarta.mail/SMTP) — botón "Enviar por correo" en el Historial, config propia en `correo.properties` (clave cifrada igual que el certificado). **No probado contra un servidor SMTP real todavía** |
 | Envío automático al cliente al quedar AUTORIZADO | ✅ **Escrito** (`ConectorPrincipal.intentarEnvioAutomaticoPorCorreo`) — si el cliente del ticket tiene correo (el de su perfil `CUSTOMERS.EMAIL`, o el que el cajero ingresó al activar "Facturar SRI: SI" si no tenía uno) y existe `config/correo.properties`, se le manda el XML+RIDE apenas el SRI autoriza, sin acción manual. El correo se lee de `RECEIPTS.ATTRIBUTES` (formato `Properties.storeToXML` de ECOPos, sin depender de sus clases). Un fallo de correo nunca afecta el resultado ya resuelto ante el SRI. **No probado contra un servidor SMTP real todavía** (mismo pendiente que el botón manual) |
@@ -180,36 +180,35 @@ documenta el procedimiento completo (queda `@Disabled` a propósito, no corre
 en CI). Recuerda borrar los datos de prueba de la base `ecopos` al terminar
 — no lo hace el test automáticamente.
 
-## ⚠️ Hallazgo real: el SRI rechaza una Nota de Crédito a "CONSUMIDOR FINAL"
+## ✅ Confirmado con una segunda prueba real: el SRI SÍ rechaza la Nota de Crédito a "CONSUMIDOR FINAL"
 
-Se ejecutó `AnulacionService.anular(...)` contra datos 100% reales (mismo
-certificado, mismo servidor de pruebas real, misma factura ya AUTORIZADA de
-la prueba anterior). El flujo técnico funcionó de punta a punta - XML
-válido, firma correcta, Recepción respondió `RECIBIDA` - pero la
-Autorización volvió:
+Primera prueba: se ejecutó `AnulacionService.anular(...)` contra datos
+100% reales (mismo certificado, mismo servidor de pruebas real) sobre una
+factura emitida a **CONSUMIDOR FINAL** (`tipoIdentificacionComprador=07`,
+`identificacionComprador=9999999999999`). El flujo técnico funcionó de
+punta a punta - XML válido, firma correcta, Recepción respondió
+`RECIBIDA` - pero la Autorización volvió:
 
 ```
 Estado: NO AUTORIZADO | 69: ERROR EN LA IDENTIFICACION DEL RECEPTOR
 ```
 
-La factura que se intentó anular fue emitida a **CONSUMIDOR FINAL**
-(`tipoIdentificacionComprador=07`, `identificacionComprador=9999999999999`) -
-exactamente esos mismos datos, sin cambiar nada, es lo que el SRI ya había
-AUTORIZADO en la factura original. La hipótesis más probable (**no
-confirmada** - no se pudo consultar la documentación oficial del SRI desde
-este entorno de red, y no se volvió a probar con un comprador identificado
-para no gastar otra transacción real) es que **el SRI no permite emitir una
-Nota de Crédito contra un comprador "consumidor final" genérico** - a
-diferencia de una factura, una nota de crédito necesitaría un comprador
-identificable (cédula/RUC real) para ser trazable.
+**Segunda prueba (confirmación)**: se creó una factura de prueba nueva a
+un comprador **identificado** (cédula real con dígito verificador válido,
+`1712345675`, tipo `05`) — quedó `AUTORIZADO` por el SRI real sin
+problema. Se anuló esa misma factura con `AnulacionService.anular(...)` -
+esta vez la Nota de Crédito quedó **`AUTORIZADO`**, sin el rechazo 69.
 
-**Antes de confiar en la anulación para facturas reales**: prueba
-`AnulacionService` contra una factura emitida a un comprador con
-cédula/RUC real (no consumidor final) y confirma si el rechazo 69
-desaparece. Si se confirma la hipótesis, `AnulacionFrame` debería advertir
-o bloquear el intento cuando la factura original sea a consumidor final,
-en vez de dejar que el usuario descubra el rechazo despues de una llamada
-real al SRI.
+**Conclusión confirmada** (ya no es solo una hipótesis): el SRI no permite
+emitir una Nota de Crédito contra un comprador "consumidor final"
+genérico - a diferencia de una factura, una nota de crédito necesita un
+comprador identificable (cédula/RUC real) para ser trazable.
+
+**Arreglado**: `AnulacionService.anular(...)` ahora revisa esto antes de
+intentar nada - si la factura original fue emitida a consumidor final,
+lanza un error claro (`IllegalStateException`) inmediatamente, sin gastar
+una llamada real al SRI para terminar en un rechazo ya conocido.
+`AnulacionFrame` muestra ese mensaje tal cual en su diálogo de error.
 
 ## ⚠️ Hallazgo real: el framework de botones de ECOPos no soporta color dinámico
 
@@ -292,22 +291,18 @@ servicio persistente si no se corregía.
 **Pendientes que requieren confirmación/prueba humana (nada de esto se
 puede resolver solo con más código):**
 
-1. **Confirmar el hallazgo de Nota de Crédito vs. consumidor final** con
-   una factura real a un comprador identificado (cédula/RUC, no
-   "consumidor final") - ver hallazgo arriba. Mientras no se confirme, no
-   confíes en la anulación para facturas emitidas a consumidor final.
-2. **Probar el envío por correo contra un servidor SMTP real** (manual
+1. **Probar el envío por correo contra un servidor SMTP real** (manual
    desde el Historial, y automático al quedar AUTORIZADO) - solo se
    verificó que compila y que arma el mensaje correctamente,
    `NotificadorCorreo` nunca se conectó a un servidor SMTP de verdad.
-3. **Probar el ambiente de Producción** una vez que el negocio esté listo
+2. **Probar el ambiente de Producción** una vez que el negocio esté listo
    para emitir facturas reales (hasta ahora todo se probó en `PRUEBAS` a
    propósito, incluida la Nota de Crédito).
-4. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
+3. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
    en la instalación real donde corra el conector — `ConectorPrincipal`
    usa `localhost`/`3306`/`ecopos`/`root`/`` como valores por defecto si el
    archivo no existe, pensado para XAMPP local, no para producción.
-5. Probar `servicio-windows/` (WinSW) en una máquina distinta a esta -
+4. Probar `servicio-windows/` (WinSW) en una máquina distinta a esta -
    aquí se probó instalar/iniciar/detener/reiniciar con resultado
    correcto, pero siempre en la misma máquina de desarrollo.
 

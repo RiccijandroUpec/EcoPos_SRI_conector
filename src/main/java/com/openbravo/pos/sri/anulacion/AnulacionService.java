@@ -85,6 +85,20 @@ public final class AnulacionService {
                         "El ticket " + ticketIdFactura + " no tiene una factura AUTORIZADA para anular"));
 
         Factura factura = FacturaXmlReader.leer(facturaOriginal.xmlAutorizado);
+
+        // Confirmado con una prueba real (ver README): el SRI RECHAZA
+        // ("69: ERROR EN LA IDENTIFICACION DEL RECEPTOR") una Nota de Credito
+        // contra una factura emitida a CONSUMIDOR FINAL - solo acepta
+        // anular facturas emitidas a un comprador identificado (cedula/RUC
+        // real). Cortar aqui evita gastar una llamada real al SRI para
+        // terminar en un rechazo ya conocido.
+        if (Cliente.IDENTIFICACION_CONSUMIDOR_FINAL.equals(factura.getInfoFactura().getIdentificacionComprador())) {
+            throw new IllegalStateException(
+                    "El SRI no permite anular una factura emitida a CONSUMIDOR FINAL (confirmado con una prueba real - "
+                    + "ver README, hallazgo \"el SRI rechaza una Nota de Credito a CONSUMIDOR FINAL\"). "
+                    + "Solo se puede anular una factura emitida a un comprador identificado (cedula/RUC).");
+        }
+
         Comprobante comprobante = construirComprobanteNotaCredito(factura, facturaOriginal.id, motivo);
 
         comprobanteRepository.insertar(comprobante);
