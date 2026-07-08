@@ -1,12 +1,46 @@
-# ecopos-sri-connector
+# 🇪🇨 ecopos-sri-connector
+
+![Java](https://img.shields.io/badge/Java-11-ED8B00?logo=openjdk&logoColor=white)
+![Maven](https://img.shields.io/badge/Build-Apache%20Maven-C71A36?logo=apachemaven&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL%2FMariaDB-4479A1?logo=mysql&logoColor=white)
+![Apache CXF](https://img.shields.io/badge/SOAP-Apache%20CXF-D22128?logo=apache&logoColor=white)
+![JAXB](https://img.shields.io/badge/XML-JAXB-2496ED)
+![xades4j](https://img.shields.io/badge/Firma-XAdES--BES-6E4C13)
+![PDFBox](https://img.shields.io/badge/PDF-Apache%20PDFBox-D22128?logo=apache&logoColor=white)
+![ZXing](https://img.shields.io/badge/Barcode-ZXing-black)
+![jakarta.mail](https://img.shields.io/badge/Correo-jakarta.mail-EA4335?logo=gmail&logoColor=white)
+![WinSW](https://img.shields.io/badge/Servicio%20Windows-WinSW-0078D6?logo=windows&logoColor=white)
+![License](https://img.shields.io/badge/Licencia-por%20definir-lightgrey)
 
 Módulo Java **independiente** (Maven, propio jar) que emite facturación
-electrónica ante el SRI (Servicio de Rentas Internas, Ecuador) a partir de
-las ventas registradas en ECOPos.
+electrónica ante el **SRI** (Servicio de Rentas Internas del Ecuador) a
+partir de las ventas registradas en [EcoPos](https://github.com/RiccijandroUpec/EcoPos).
 
-**¿Vas a instalar esto en la computadora de un negocio?** Ve directo a
-[`INSTALAR.md`](INSTALAR.md) - esta guía de abajo es para quien desarrolla
-el conector, no para quien lo instala.
+**Hecho en Ecuador, para Ecuador.** Cualquier negocio ecuatoriano que use
+EcoPos puede instalar esto en su propia computadora y empezar a facturar
+electrónicamente — ver [`INSTALAR.md`](INSTALAR.md) para la guía paso a
+paso (no hace falta saber programar). Este documento (`README.md`) es la
+documentación técnica para quien desarrolla o quiere entender/contribuir
+al conector.
+
+## 🤝 Contribuciones
+
+Este proyecto es de código abierto y las contribuciones son bienvenidas
+— desde cualquier parte de Ecuador o del mundo. Formas concretas de
+ayudar:
+
+- **Confirmar los pendientes reales** listados en "Siguiente paso
+  inmediato" más abajo (SMTP en una red sin restricciones, WinSW en otra
+  máquina, ambiente Producción con datos reales de un negocio).
+- **Agregar soporte para otros tipos de comprobante** (Nota de Débito,
+  Guía de Remisión, Comprobante de Retención) si tu negocio los necesita
+  — la arquitectura ya está pensada para que sea un mapeo nuevo, no un
+  rediseño (ver "Fuera de alcance actual" abajo).
+- **Reportar bugs o casos reales del SRI** que este conector no maneje
+  bien todavía — cualquier hallazgo de "así rechaza el SRI tal cosa" vale
+  oro, se aprende mucho más probando contra el servidor real que leyendo
+  la ficha técnica.
+- Abre un *issue* o un *pull request* directo en este repositorio.
 
 ## Tecnologías y herramientas
 
@@ -437,3 +471,16 @@ Este módulo no requiere que ECOPos esté corriendo para compilarse ni para
 correr sus propios tests unitarios — solo necesita acceso de red a la misma
 base de datos MySQL para las pruebas de integración (lectura de `TICKETS`/
 `RECEIPTS`/`TICKETLINES`, y CRUD de `ecopos_sri_comprobantes`).
+
+## ☕ Apoya este proyecto / Contacto
+
+Si este conector le ahorró tiempo o dinero a tu negocio, o simplemente
+quieres seguir el proyecto:
+
+- 📸 Instagram (también sirve como "invítame un café"): [@riccijandro](https://instagram.com/riccijandro)
+- 🐙 GitHub: [@RiccijandroUpec](https://github.com/RiccijandroUpec)
+- 💼 LinkedIn: [@riccijandro](https://linkedin.com/in/riccijandro)
+- 🐦 X/Twitter: [@riccijandro](https://x.com/riccijandro)
+
+Preguntas, ideas o casos reales del SRI que valga la pena documentar — un
+mensaje o un *issue* en el repo son bienvenidos.
