@@ -92,8 +92,8 @@ el conector, no para quien lo instala.
 | RIDE en PDF (`RideGenerator` / `RideNotaCreditoGenerator`) | ✅ **Escrito y verificado** (render-a-imagen con `PDFRenderer`, no solo extracción de texto) contra un layout de referencia real de otro sistema — cubre fecha/hora de autorización, subtotales por tarifa/tipo de impuesto (con IVA/ICE/IRBPNR etiquetados por su código real), código auxiliar y detalle adicional por línea, subsidio, e Información Adicional |
 | **Nota de Crédito (anulación de facturas)** (`AnulacionService`, `NotaCreditoXmlMapper`, `AnulacionFrame`) | ✅ **Probada de punta a punta contra el SRI real, dos veces**: contra una factura a CONSUMIDOR FINAL (rechazada, `69: ERROR EN LA IDENTIFICACION DEL RECEPTOR`) y contra una factura a un comprador identificado con cédula real (AUTORIZADO, sin problema) — ver hallazgo abajo. `AnulacionService` ahora bloquea el intento con un mensaje claro si la factura original es a consumidor final, antes de llamar al SRI |
 | `notaCredito_V1.1.0.xsd` | ✅ Vendorizado desde el mismo mirror que `factura_V2.1.0.xsd` (`xprl-gjf/sri-efactura-core`) — paquete Java propio (`xml.generado.notacredito`) porque comparte nombres de tipo con el XSD de factura pero con forma distinta |
-| Envío por correo (`NotificadorCorreo`, `ConfiguracionCorreoFrame`) | ✅ Escrito y compila (jakarta.mail/SMTP) — botón "Enviar por correo" en el Historial, config propia en `correo.properties` (clave cifrada igual que el certificado). **No probado contra un servidor SMTP real todavía** |
-| Envío automático al cliente al quedar AUTORIZADO | ✅ **Escrito** (`ConectorPrincipal.intentarEnvioAutomaticoPorCorreo`) — si el cliente del ticket tiene correo (el de su perfil `CUSTOMERS.EMAIL`, o el que el cajero ingresó al activar "Facturar SRI: SI" si no tenía uno) y existe `config/correo.properties`, se le manda el XML+RIDE apenas el SRI autoriza, sin acción manual. El correo se lee de `RECEIPTS.ATTRIBUTES` (formato `Properties.storeToXML` de ECOPos, sin depender de sus clases). Un fallo de correo nunca afecta el resultado ya resuelto ante el SRI. **No probado contra un servidor SMTP real todavía** (mismo pendiente que el botón manual) |
+| Envío por correo (`NotificadorCorreo`, `ConfiguracionCorreoFrame`) | ✅ Escrito y compila (jakarta.mail/SMTP) — botón "Enviar por correo" en el Historial, config propia en `correo.properties` (clave cifrada igual que el certificado). **Se intentó contra un servidor SMTP real (cuenta desechable de Ethereal) y el puerto SMTP está bloqueado en la red de desarrollo - ver "Siguiente paso inmediato" abajo** |
+| Envío automático al cliente al quedar AUTORIZADO | ✅ **Escrito** (`ConectorPrincipal.intentarEnvioAutomaticoPorCorreo`) — si el cliente del ticket tiene correo (el de su perfil `CUSTOMERS.EMAIL`, o el que el cajero ingresó al activar "Facturar SRI: SI" si no tenía uno) y existe `config/correo.properties`, se le manda el XML+RIDE apenas el SRI autoriza, sin acción manual. El correo se lee de `RECEIPTS.ATTRIBUTES` (formato `Properties.storeToXML` de ECOPos, sin depender de sus clases). Un fallo de correo nunca afecta el resultado ya resuelto ante el SRI. **Se intentó contra un servidor SMTP real (cuenta desechable de Ethereal) y el puerto SMTP está bloqueado en la red de desarrollo - ver "Siguiente paso inmediato" abajo** (mismo pendiente que el botón manual) |
 | Reintento manual desde el Historial | ✅ Escrito — botón "Reintentar envío" para FACTURA en ERROR/RECHAZADO/ENVIADO, reusa `ConectorPrincipal.procesarTicket` (relee el ticket de ECOPos, así que recoge correcciones hechas desde la última vez) |
 | **Servicio de Windows** (`servicio-windows/`, WinSW) | ✅ **Instalado y probado de verdad** — `ConectorPrincipal` corre como servicio real (arranque automático, se reinicia solo si se cae), no como proceso manual en una terminal. Probado instalar/iniciar/detener/reiniciar, logs con rotación. Pendiente: probar en una máquina limpia distinta a esta |
 | **Instalador auto-contenido** (`InstaladorEcoPos`) | ✅ **Escrito y probado dos veces de punta a punta** (contra una base de prueba limpia simulando una instalación existente, y contra la base real de este negocio) — sincroniza de forma idempotente `Menu.Root`/`Ticket.Buttons`/`Ticket.Close`/los scripts SI-NO/sus íconos/permisos de rol, y crea la tabla propia del conector. No depende de tener el repo de EcoPos a mano (plantillas empaquetadas en este jar, `src/main/resources/plantillas-ecopos/`) |
@@ -291,13 +291,23 @@ servicio persistente si no se corregía.
 **Pendientes que requieren confirmación/prueba humana (nada de esto se
 puede resolver solo con más código):**
 
-1. **Probar el envío por correo contra un servidor SMTP real** (manual
-   desde el Historial, y automático al quedar AUTORIZADO) - solo se
-   verificó que compila y que arma el mensaje correctamente,
-   `NotificadorCorreo` nunca se conectó a un servidor SMTP de verdad.
+1. **Probar el envío por correo contra un servidor SMTP real** — se
+   intentó de verdad (cuenta desechable real de Ethereal Email, sin
+   inventar credenciales) y **el puerto SMTP (587/465) está bloqueado a
+   nivel de red en el entorno donde se desarrolló esto** - confirmado
+   probando 3 combinaciones servidor/puerto distintas (Ethereal 587,
+   Ethereal 465, Gmail 587), las 3 con el mismo timeout de conexión. No es
+   un bug de `NotificadorCorreo` (arma el mensaje correctamente, solo
+   falla al conectar el socket) - es una restricción de esa red específica,
+   igual que `www.sri.gob.ec` es inalcanzable pero `celcer.sri.gob.ec` sí
+   responde. La mayoría de redes de negocio/hogar no bloquean SMTP
+   saliente así, pero **hay que probar esto en la máquina real de destino**
+   antes de confiar en el envío automático de correo.
 2. **Probar el ambiente de Producción** una vez que el negocio esté listo
    para emitir facturas reales (hasta ahora todo se probó en `PRUEBAS` a
-   propósito, incluida la Nota de Crédito).
+   propósito, incluida la Nota de Crédito). **Esto no se activa por
+   iniciativa propia bajo ningún "hazlo todo" genérico** - requiere que el
+   negocio esté listo y lo pida puntualmente.
 3. Crear `config/conexion.properties` (host/puerto/baseDatos/usuario/clave)
    en la instalación real donde corra el conector — `ConectorPrincipal`
    usa `localhost`/`3306`/`ecopos`/`root`/`` como valores por defecto si el
