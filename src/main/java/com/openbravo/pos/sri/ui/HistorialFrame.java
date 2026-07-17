@@ -9,6 +9,7 @@ import com.openbravo.pos.sri.dominio.ConfiguracionCorreo;
 import com.openbravo.pos.sri.dominio.DatosEmisor;
 import com.openbravo.pos.sri.dominio.EstadoComprobante;
 import com.openbravo.pos.sri.dominio.TipoComprobante;
+import com.openbravo.pos.sri.config.RutasConector;
 import com.openbravo.pos.sri.repository.ComprobanteRepository;
 import com.openbravo.pos.sri.ride.RideGenerator;
 import com.openbravo.pos.sri.ride.RideNotaCreditoGenerator;
@@ -53,10 +54,19 @@ import javax.sql.DataSource;
  */
 public class HistorialFrame extends JFrame {
 
-    private static final String RUTA_CONEXION_POR_DEFECTO = "config/conexion.properties";
-    private static final Path RUTA_EMISOR_POR_DEFECTO = Path.of("config/datos-emisor.properties");
-    private static final Path RUTA_CORREO_POR_DEFECTO = Path.of("config/correo.properties");
     private static final DateTimeFormatter FORMATO_FECHA = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+
+    private static Path rutaConexionPorDefecto() {
+        return RutasConector.resolver("config/conexion.properties");
+    }
+
+    private static Path rutaEmisorPorDefecto() {
+        return RutasConector.resolver("config/datos-emisor.properties");
+    }
+
+    private static Path rutaCorreoPorDefecto() {
+        return RutasConector.resolver("config/correo.properties");
+    }
 
     /** Comprobantes ENVIADO/ERROR con mas de este tiempo desde su emision se marcan como atascados - aviso operativo, no un plazo legal verificado. */
     private static final Duration UMBRAL_ATASCADO = Duration.ofHours(24);
@@ -73,7 +83,7 @@ public class HistorialFrame extends JFrame {
     private final JButton botonCorreo = new JButton("Enviar por correo");
 
     public HistorialFrame() {
-        this(Path.of(RUTA_CONEXION_POR_DEFECTO));
+        this(rutaConexionPorDefecto());
     }
 
     public HistorialFrame(Path archivoConexion) {
@@ -134,7 +144,7 @@ public class HistorialFrame extends JFrame {
         botones.add(botonCorreo);
 
         JButton botonConfigurarCorreo = new JButton("Configurar correo...");
-        botonConfigurarCorreo.addActionListener(e -> new ConfiguracionCorreoFrame(RUTA_CORREO_POR_DEFECTO).setVisible(true));
+        botonConfigurarCorreo.addActionListener(e -> new ConfiguracionCorreoFrame(rutaCorreoPorDefecto()).setVisible(true));
         botones.add(botonConfigurarCorreo);
 
         JButton botonActualizar = new JButton("Actualizar");
@@ -151,7 +161,7 @@ public class HistorialFrame extends JFrame {
         try {
             DataSource dataSource = ConexionLoader.cargar(archivoConexion);
             List<ComprobanteRepository.RegistroHistorial> historial =
-                    new ComprobanteRepository(dataSource).listarHistorial();
+                    new ComprobanteRepository(dataSource.getConnection()).listarHistorial();
 
             for (ComprobanteRepository.RegistroHistorial registro : historial) {
                 modelo.addRow(new Object[]{
@@ -212,7 +222,7 @@ public class HistorialFrame extends JFrame {
         }
         try {
             DataSource dataSource = ConexionLoader.cargar(archivoConexion);
-            var xml = new ComprobanteRepository(dataSource).obtenerXml(registro.ticketId);
+            var xml = new ComprobanteRepository(dataSource.getConnection()).obtenerXml(registro.ticketId);
             if (xml.isEmpty() || xml.get().masReciente() == null) {
                 JOptionPane.showMessageDialog(this, "Este comprobante todavía no tiene ningún XML generado.", "Sin XML", JOptionPane.INFORMATION_MESSAGE);
                 return;
@@ -267,7 +277,7 @@ public class HistorialFrame extends JFrame {
     /** Genera el RIDE del registro dado (factura o nota de credito) contra el XML mas reciente guardado. Null si no hay XML todavia (ya avisado al usuario). */
     private byte[] generarRide(ComprobanteRepository.RegistroHistorial registro) throws Exception {
         DataSource dataSource = ConexionLoader.cargar(archivoConexion);
-        var xml = new ComprobanteRepository(dataSource).obtenerXml(registro.ticketId);
+        var xml = new ComprobanteRepository(dataSource.getConnection()).obtenerXml(registro.ticketId);
         if (xml.isEmpty() || xml.get().masReciente() == null) {
             JOptionPane.showMessageDialog(this, "Este comprobante todavía no tiene ningún XML generado.", "Sin XML", JOptionPane.INFORMATION_MESSAGE);
             return null;
@@ -307,9 +317,9 @@ public class HistorialFrame extends JFrame {
             @Override
             protected Void doInBackground() {
                 try {
-                    DatosEmisor emisor = ConfiguracionLoader.cargar(RUTA_EMISOR_POR_DEFECTO);
+                    DatosEmisor emisor = ConfiguracionLoader.cargar(rutaEmisorPorDefecto());
                     DataSource dataSource = ConexionLoader.cargar(archivoConexion);
-                    new ConectorPrincipal(emisor, dataSource).procesarTicket(registro.ticketId);
+                    new ConectorPrincipal(emisor, dataSource.getConnection()).procesarTicket(registro.ticketId);
                 } catch (Exception e) {
                     error = e;
                 }
@@ -333,7 +343,7 @@ public class HistorialFrame extends JFrame {
         if (registro == null) {
             return;
         }
-        if (!Files.exists(RUTA_CORREO_POR_DEFECTO)) {
+        if (!Files.exists(rutaCorreoPorDefecto())) {
             JOptionPane.showMessageDialog(this,
                     "Todavía no configuraste el correo saliente. Usa el botón \"Configurar correo...\" primero.",
                     "Falta configuración", JOptionPane.WARNING_MESSAGE);
@@ -352,12 +362,12 @@ public class HistorialFrame extends JFrame {
             protected Void doInBackground() {
                 try {
                     DataSource dataSource = ConexionLoader.cargar(archivoConexion);
-                    var xml = new ComprobanteRepository(dataSource).obtenerXml(registro.ticketId);
+                    var xml = new ComprobanteRepository(dataSource.getConnection()).obtenerXml(registro.ticketId);
                     if (xml.isEmpty() || xml.get().masReciente() == null) {
                         throw new IllegalStateException("Este comprobante todavía no tiene ningún XML generado.");
                     }
                     byte[] pdf = generarRide(registro);
-                    ConfiguracionCorreo config = ConfiguracionCorreoLoader.cargar(RUTA_CORREO_POR_DEFECTO);
+                    ConfiguracionCorreo config = ConfiguracionCorreoLoader.cargar(rutaCorreoPorDefecto());
                     NotificadorCorreo notificador = new NotificadorCorreo(config);
 
                     String tipo = registro.tipoComprobante == TipoComprobante.NOTA_CREDITO ? "Nota de Crédito" : "Factura";

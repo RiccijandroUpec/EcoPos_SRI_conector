@@ -1,6 +1,7 @@
 package com.openbravo.pos.sri.ui;
 
 import com.openbravo.pos.sri.config.ConfiguracionCorreoLoader;
+import com.openbravo.pos.sri.config.RutasConector;
 import com.openbravo.pos.sri.dominio.ConfiguracionCorreo;
 
 import javax.swing.BorderFactory;
@@ -30,8 +31,6 @@ import java.nio.file.Path;
  */
 public class ConfiguracionCorreoFrame extends JFrame {
 
-    private static final String RUTA_CONFIG_POR_DEFECTO = "config/correo.properties";
-
     private final Path archivoConfiguracion;
 
     private final JTextField campoHost = new JTextField(25);
@@ -45,7 +44,7 @@ public class ConfiguracionCorreoFrame extends JFrame {
     private char[] claveExistente;
 
     public ConfiguracionCorreoFrame() {
-        this(Path.of(RUTA_CONFIG_POR_DEFECTO));
+        this(RutasConector.resolver("config/correo.properties"));
     }
 
     public ConfiguracionCorreoFrame(Path archivoConfiguracion) {

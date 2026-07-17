@@ -3,6 +3,7 @@ package com.openbravo.pos.sri.ui;
 import com.openbravo.pos.sri.anulacion.AnulacionService;
 import com.openbravo.pos.sri.config.ConexionLoader;
 import com.openbravo.pos.sri.config.ConfiguracionLoader;
+import com.openbravo.pos.sri.config.RutasConector;
 import com.openbravo.pos.sri.dominio.DatosEmisor;
 
 import javax.swing.BorderFactory;
@@ -34,8 +35,6 @@ import java.util.function.Consumer;
  */
 public class AnulacionFrame extends JDialog {
 
-    private static final Path RUTA_EMISOR_POR_DEFECTO = Path.of("config/datos-emisor.properties");
-
     private final Path archivoConexion;
     private final Path archivoEmisor;
     private final String ticketIdFactura;
@@ -47,7 +46,7 @@ public class AnulacionFrame extends JDialog {
 
     public AnulacionFrame(Frame propietario, Path archivoConexion, String ticketIdFactura,
                            String descripcionFactura, Consumer<String> alTerminar) {
-        this(propietario, archivoConexion, RUTA_EMISOR_POR_DEFECTO, ticketIdFactura, descripcionFactura, alTerminar);
+        this(propietario, archivoConexion, RutasConector.resolver("config/datos-emisor.properties"), ticketIdFactura, descripcionFactura, alTerminar);
     }
 
     public AnulacionFrame(Frame propietario, Path archivoConexion, Path archivoEmisor, String ticketIdFactura,

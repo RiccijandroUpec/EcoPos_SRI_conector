@@ -12,19 +12,22 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import javax.sql.DataSource;
 
 /**
  * CRUD sobre la tabla propia {@code ecopos_sri_comprobantes} (ver
  * src/main/resources/sql/001_create_ecopos_sri_comprobantes.sql). Nunca
  * toca ninguna tabla original de ECOPos.
+ *
+ * La conexion se inyecta (no se abre/cierra por llamada): en el modo
+ * fusionado (mismo proceso que ECOPos) su ciclo de vida es del puente
+ * ({@code EcoPosSriBridgeImpl}), no de este DAO.
  */
 public class ComprobanteRepository {
 
-    private final DataSource dataSource;
+    private final Connection connection;
 
-    public ComprobanteRepository(DataSource dataSource) {
-        this.dataSource = dataSource;
+    public ComprobanteRepository(Connection connection) {
+        this.connection = connection;
     }
 
     /**
@@ -36,8 +39,7 @@ public class ComprobanteRepository {
      */
     public Optional<EstadoComprobante> buscarEstadoPorTicketId(String ticketId) throws SQLException {
         String sql = "SELECT estado FROM ecopos_sri_comprobantes WHERE ticket_id = ?";
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, ticketId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -74,8 +76,7 @@ public class ComprobanteRepository {
     public Optional<RegistroExistente> buscarPorTicketId(String ticketId) throws SQLException {
         String sql = "SELECT id, secuencial, clave_acceso, estado, intentos " +
             "FROM ecopos_sri_comprobantes WHERE ticket_id = ?";
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, ticketId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -113,8 +114,7 @@ public class ComprobanteRepository {
     public Optional<FacturaParaAnular> buscarFacturaAutorizadaParaAnular(String ticketId) throws SQLException {
         String sql = "SELECT id, xml_respuesta_sri FROM ecopos_sri_comprobantes " +
             "WHERE ticket_id = ? AND tipo_comprobante = '01' AND estado = 'AUTORIZADO'";
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, ticketId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -127,8 +127,7 @@ public class ComprobanteRepository {
 
     public boolean existePorTicketId(String ticketId) throws SQLException {
         String sql = "SELECT 1 FROM ecopos_sri_comprobantes WHERE ticket_id = ?";
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, ticketId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
@@ -140,8 +139,7 @@ public class ComprobanteRepository {
         String sql = "INSERT INTO ecopos_sri_comprobantes " +
             "(id, ticket_id, tipo_comprobante, comprobante_original_id, motivo, secuencial, ambiente, estado, fecha_emision, intentos) " +
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, c.getId());
             ps.setString(2, c.getTicketId());
             ps.setString(3, c.getTipo().getCodigo());
@@ -173,8 +171,7 @@ public class ComprobanteRepository {
     public String siguienteSecuencial(TipoComprobante tipo) throws SQLException {
         String sql = "SELECT MAX(CAST(secuencial AS UNSIGNED)) FROM ecopos_sri_comprobantes " +
             "WHERE secuencial IS NOT NULL AND tipo_comprobante = ?";
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, tipo.getCodigo());
             try (ResultSet rs = ps.executeQuery()) {
                 long maximo = 0;
@@ -192,8 +189,7 @@ public class ComprobanteRepository {
             "xml_generado = ?, xml_firmado = ?, xml_respuesta_sri = ?, " +
             "mensaje_error = ?, intentos = ?, fecha_autorizacion = ? " +
             "WHERE id = ?";
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, c.getClaveAcceso());
             ps.setString(2, c.getNumeroAutorizacion());
             ps.setString(3, c.getEstado().name());
@@ -214,8 +210,7 @@ public class ComprobanteRepository {
             "WHERE estado IN ('ERROR', 'ENVIADO') AND intentos < ? " +
             "ORDER BY fecha_creacion";
         List<String> ids = new ArrayList<>();
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setInt(1, maxIntentos);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -298,8 +293,7 @@ public class ComprobanteRepository {
     public Optional<XmlComprobante> obtenerXml(String ticketId) throws SQLException {
         String sql = "SELECT xml_generado, xml_firmado, xml_respuesta_sri, fecha_autorizacion " +
             "FROM ecopos_sri_comprobantes WHERE ticket_id = ?";
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, ticketId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -329,8 +323,7 @@ public class ComprobanteRepository {
             "LEFT JOIN TICKETS t ON t.ID = c.ticket_id " +
             "ORDER BY c.fecha_emision DESC";
         List<RegistroHistorial> historial = new ArrayList<>();
-        try (Connection con = dataSource.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql);
+        try (PreparedStatement ps = connection.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 Timestamp fechaEmision = rs.getTimestamp("fecha_emision");

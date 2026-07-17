@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
-import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,6 +19,10 @@ import org.slf4j.LoggerFactory;
  * (TICKETS/RECEIPTS/TICKETLINES/PAYMENTS/PRODUCTS/TAXES/CUSTOMERS), en
  * modo solo-lectura. Nunca escribe en estas tablas - este conector no
  * modifica el core de ECOPos ni sus datos.
+ *
+ * La conexion se inyecta (no se abre/cierra por llamada): en el modo
+ * fusionado (mismo proceso que ECOPos) su ciclo de vida es del puente
+ * ({@code EcoPosSriBridgeImpl}), no de este DAO.
  */
 public class TicketReader {
 
@@ -27,22 +30,20 @@ public class TicketReader {
     /** Propiedad por-ticket que script.SriInvoiceOn.txt guarda (mismo mecanismo que "sri.invoice") con el correo que el cajero ingreso para este ticket. */
     private static final String PROPIEDAD_EMAIL = "sri.email";
 
-    private final DataSource dataSource;
+    private final Connection connection;
 
-    public TicketReader(DataSource dataSource) {
-        this.dataSource = dataSource;
+    public TicketReader(Connection connection) {
+        this.connection = connection;
     }
 
     public Optional<TicketCrudo> leer(String ticketId) throws SQLException {
-        try (Connection con = dataSource.getConnection()) {
-            TicketCrudo t = leerCabecera(con, ticketId);
-            if (t == null) {
-                return Optional.empty();
-            }
-            t.lineas = leerLineas(con, ticketId);
-            t.pagos = leerPagos(con, ticketId);
-            return Optional.of(t);
+        TicketCrudo t = leerCabecera(connection, ticketId);
+        if (t == null) {
+            return Optional.empty();
         }
+        t.lineas = leerLineas(connection, ticketId);
+        t.pagos = leerPagos(connection, ticketId);
+        return Optional.of(t);
     }
 
     private TicketCrudo leerCabecera(Connection con, String ticketId) throws SQLException {

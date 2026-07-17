@@ -50,9 +50,13 @@ public final class AnulacionService {
     private final ComprobanteRepository comprobanteRepository;
     private final EnvioComprobanteService envioComprobanteService;
 
-    public AnulacionService(DatosEmisor emisor, javax.sql.DataSource dataSource) {
+    public AnulacionService(DatosEmisor emisor, javax.sql.DataSource dataSource) throws SQLException {
+        this(emisor, dataSource.getConnection());
+    }
+
+    public AnulacionService(DatosEmisor emisor, java.sql.Connection connection) {
         this.emisor = emisor;
-        this.comprobanteRepository = new ComprobanteRepository(dataSource);
+        this.comprobanteRepository = new ComprobanteRepository(connection);
         XadesBesSigner firmador = new XadesBesSigner(emisor.getRutaCertificadoP12(), emisor.getClaveCertificado());
         SoapClient soapClient = new SoapClient(emisor.getAmbiente());
         this.envioComprobanteService = new EnvioComprobanteService(firmador, soapClient, comprobanteRepository);

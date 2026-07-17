@@ -284,6 +284,25 @@
                                     <resource>META-INF/cxf/bus-extensions.txt</resource>
                                 </transformer>
                             </transformers>
+                            <!-- EcoPos (el POS que carga este jar en el mismo proceso/JVM
+                                 desde 2026-07-17) trae su propia version vieja de slf4j
+                                 (1.5.8) + un binding a log4j1/reload4j en su classpath. Sin
+                                 esto, un URLClassLoader parent-first resolveria org.slf4j.*
+                                 contra la version 1.5.8 de EcoPos en vez de la 2.0.13 que
+                                 este jar realmente trae, dejando el logging del conector
+                                 enganchado (silenciosamente) al sink de log4j de EcoPos en
+                                 vez de a su propio logback. Reubicar el paquete elimina esa
+                                 colision de identidad de clase por completo. -->
+                            <relocations>
+                                <relocation>
+                                    <pattern>org.slf4j</pattern>
+                                    <shadedPattern>com.openbravo.pos.sri.shaded.slf4j</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>ch.qos.logback</pattern>
+                                    <shadedPattern>com.openbravo.pos.sri.shaded.logback</shadedPattern>
+                                </relocation>
+                            </relocations>
                         </configuration>
                     </execution>
                 </executions>

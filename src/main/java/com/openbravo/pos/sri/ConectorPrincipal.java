@@ -3,6 +3,7 @@ package com.openbravo.pos.sri;
 import com.openbravo.pos.sri.config.ConexionLoader;
 import com.openbravo.pos.sri.config.ConfiguracionCorreoLoader;
 import com.openbravo.pos.sri.config.ConfiguracionLoader;
+import com.openbravo.pos.sri.config.RutasConector;
 import com.openbravo.pos.sri.correo.NotificadorCorreo;
 import com.openbravo.pos.sri.dominio.Comprobante;
 import com.openbravo.pos.sri.dominio.ConfiguracionCorreo;
@@ -55,8 +56,19 @@ public final class ConectorPrincipal {
 
     private static final Path CONFIG_EMISOR_POR_DEFECTO = Path.of("config/datos-emisor.properties");
     private static final Path CONFIG_CONEXION_POR_DEFECTO = Path.of("config/conexion.properties");
-    private static final Path CONFIG_CORREO_POR_DEFECTO = Path.of("config/correo.properties");
     private static final Path CARPETA_PENDIENTES_POR_DEFECTO = Path.of("pendientes");
+
+    /**
+     * A diferencia de las 3 constantes de arriba (solo usadas en el modo
+     * standalone, main() - CWD-relativas a proposito), esta se usa tambien
+     * desde el modo fusionado (intentarEnvioAutomaticoPorCorreo, compartido
+     * por ambos modos) - por eso pasa por RutasConector en vez de ser una
+     * constante Path.of(...) fija. En modo standalone RutasConector resuelve
+     * igual que antes (base = ".", sin cambios de comportamiento).
+     */
+    private static Path rutaCorreoPorDefecto() {
+        return RutasConector.resolver("config/correo.properties");
+    }
 
     private static final int MAX_INTENTOS_REINTENTO = 5;
     private static final long INTERVALO_REINTENTOS_MINUTOS = 15;
@@ -65,11 +77,25 @@ public final class ConectorPrincipal {
     private final TicketReader ticketReader;
     private final ComprobanteRepository comprobanteRepository;
     private final EnvioComprobanteService envioComprobanteService;
+    private ScheduledExecutorService reintentosScheduler;
 
-    public ConectorPrincipal(DatosEmisor emisor, javax.sql.DataSource dataSource) {
+    /** Modo standalone (servicio propio) - abre su propia conexion via un {@link javax.sql.DataSource}. */
+    public ConectorPrincipal(DatosEmisor emisor, javax.sql.DataSource dataSource) throws SQLException {
+        this(emisor, dataSource.getConnection());
+    }
+
+    /**
+     * Modo fusionado (mismo proceso que ECOPos) - recibe una conexion ya
+     * abierta, dedicada a este conector (no la de ECOPos - ver el puente
+     * {@code EcoPosSriBridgeImpl}, que la abre y es quien controla su ciclo
+     * de vida). No usa {@link VigilantePendientes}/{@link ConexionLoader} en
+     * absoluto: quien invoque {@link #procesarTicket(String)} directamente
+     * (el hook de ECOPos) reemplaza al watcher de archivos.
+     */
+    public ConectorPrincipal(DatosEmisor emisor, java.sql.Connection connection) {
         this.emisor = emisor;
-        this.ticketReader = new TicketReader(dataSource);
-        this.comprobanteRepository = new ComprobanteRepository(dataSource);
+        this.ticketReader = new TicketReader(connection);
+        this.comprobanteRepository = new ComprobanteRepository(connection);
         XadesBesSigner firmador = new XadesBesSigner(emisor.getRutaCertificadoP12(), emisor.getClaveCertificado());
         SoapClient soapClient = new SoapClient(emisor.getAmbiente());
         this.envioComprobanteService = new EnvioComprobanteService(firmador, soapClient, comprobanteRepository);
@@ -78,20 +104,34 @@ public final class ConectorPrincipal {
     /**
      * Arranca el planificador de reintentos y luego bloquea el hilo llamador
      * vigilando la carpeta de pendientes (ver {@link VigilantePendientes#iniciar()}).
+     * Solo para el modo standalone - el modo fusionado llama
+     * {@link #iniciarReintentosPeriodicos()} directamente, sin vigilar carpeta.
      */
     public void iniciar(Path carpetaPendientes) throws IOException {
         iniciarReintentosPeriodicos();
         new VigilantePendientes(carpetaPendientes, this::procesarTicket).iniciar();
     }
 
-    private void iniciarReintentosPeriodicos() {
-        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+    /** Arranca (si no estaba ya arrancado) el reintento periodico de comprobantes en ERROR/ENVIADO. */
+    public void iniciarReintentosPeriodicos() {
+        if (reintentosScheduler != null) {
+            return;
+        }
+        reintentosScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread hilo = new Thread(runnable, "sri-reintentos");
             hilo.setDaemon(true);
             return hilo;
         });
-        scheduler.scheduleAtFixedRate(this::reintentarPendientes,
+        reintentosScheduler.scheduleAtFixedRate(this::reintentarPendientes,
                 INTERVALO_REINTENTOS_MINUTOS, INTERVALO_REINTENTOS_MINUTOS, TimeUnit.MINUTES);
+    }
+
+    /** Detiene el reintento periodico (modo fusionado: llamado al cerrar ECOPos). */
+    public void detenerReintentosPeriodicos() {
+        if (reintentosScheduler != null) {
+            reintentosScheduler.shutdownNow();
+            reintentosScheduler = null;
+        }
     }
 
     private void reintentarPendientes() {
@@ -190,14 +230,15 @@ public final class ConectorPrincipal {
         if (destinatario == null || destinatario.isBlank()) {
             return;
         }
-        if (!Files.exists(CONFIG_CORREO_POR_DEFECTO)) {
+        Path archivoCorreo = rutaCorreoPorDefecto();
+        if (!Files.exists(archivoCorreo)) {
             LOG.info("Comprobante {} autorizado con correo de cliente ({}), pero no existe {} - omitiendo envio automatico",
-                    comprobante.getId(), destinatario, CONFIG_CORREO_POR_DEFECTO);
+                    comprobante.getId(), destinatario, archivoCorreo);
             return;
         }
         try {
             byte[] pdf = RideGenerator.generar(comprobante.getXmlRespuestaSri(), comprobante.getFechaAutorizacion());
-            ConfiguracionCorreo configuracionCorreo = ConfiguracionCorreoLoader.cargar(CONFIG_CORREO_POR_DEFECTO);
+            ConfiguracionCorreo configuracionCorreo = ConfiguracionCorreoLoader.cargar(archivoCorreo);
             new NotificadorCorreo(configuracionCorreo).enviarComprobante(destinatario,
                     "Factura electrónica - " + comprobante.getSecuencial(),
                     "Adjunto el comprobante electrónico autorizado por el SRI (XML y representación impresa en PDF).",

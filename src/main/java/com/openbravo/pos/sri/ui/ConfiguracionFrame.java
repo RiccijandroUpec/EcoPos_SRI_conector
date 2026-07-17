@@ -1,6 +1,7 @@
 package com.openbravo.pos.sri.ui;
 
 import com.openbravo.pos.sri.config.ConfiguracionLoader;
+import com.openbravo.pos.sri.config.RutasConector;
 import com.openbravo.pos.sri.dominio.Ambiente;
 import com.openbravo.pos.sri.dominio.DatosEmisor;
 
@@ -40,8 +41,6 @@ import java.nio.file.Path;
  */
 public class ConfiguracionFrame extends JFrame {
 
-    private static final String RUTA_CONFIG_POR_DEFECTO = "config/datos-emisor.properties";
-
     private final Path archivoConfiguracion;
 
     private final JTextField campoRuc = new JTextField(20);
@@ -62,7 +61,7 @@ public class ConfiguracionFrame extends JFrame {
     private char[] claveCertificadoExistente;
 
     public ConfiguracionFrame() {
-        this(Path.of(RUTA_CONFIG_POR_DEFECTO));
+        this(RutasConector.resolver("config/datos-emisor.properties"));
     }
 
     public ConfiguracionFrame(Path archivoConfiguracion) {
